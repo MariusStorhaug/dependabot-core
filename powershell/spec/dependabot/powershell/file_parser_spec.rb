@@ -233,6 +233,59 @@ RSpec.describe Dependabot::Powershell::FileParser do
       end
     end
 
+    context "when module specification versions use registry SemVer or too many components" do
+      let(:manifest_file) do
+        Dependabot::DependencyFile.new(
+          name: "InvalidNativeVersions.psd1",
+          content: <<~POWERSHELL
+            @{
+              ModuleVersion = '1.0.0'
+              RequiredModules = @(
+                @{ ModuleName = 'Az.PrereleaseMinimum'; ModuleVersion = '1.2.0-beta1' },
+                @{ ModuleName = 'Az.PrereleaseExact'; RequiredVersion = '1.2.0-beta1' },
+                @{ ModuleName = 'Az.PrereleaseMaximum'; MaximumVersion = '1.2.0-beta1' },
+                @{ ModuleName = 'Az.FivePartMinimum'; ModuleVersion = '1.2.3.4.5' },
+                @{ ModuleName = 'Az.FivePartExact'; RequiredVersion = '1.2.3.4.5' },
+                @{ ModuleName = 'Az.FivePartMaximum'; MaximumVersion = '1.2.3.4.5' },
+                'Az.Valid'
+              )
+            }
+          POWERSHELL
+        )
+      end
+
+      it "excludes values that native PowerShell ModuleSpecification rejects" do
+        expect(parser.parse.map(&:name)).to contain_exactly("Az.Valid")
+      end
+    end
+
+    context "when module specification versions contain leading zeroes" do
+      let(:manifest_file) do
+        Dependabot::DependencyFile.new(
+          name: "LeadingZeroVersions.psd1",
+          content: <<~POWERSHELL
+            @{
+              ModuleVersion = '1.0.0'
+              RequiredModules = @(
+                @{ ModuleName = 'Az.Minimum'; ModuleVersion = '01.02' },
+                @{ ModuleName = 'Az.Exact'; RequiredVersion = '01.02.003' },
+                @{ ModuleName = 'Az.Maximum'; MaximumVersion = '01.02.003.0004' }
+              )
+            }
+          POWERSHELL
+        )
+      end
+
+      it "normalizes each numeric component while preserving component count" do
+        dependencies = parser.parse.to_h { |dependency| [dependency.name, dependency] }
+
+        expect(dependencies.fetch("Az.Minimum").requirements.first.fetch(:requirement)).to eq(">= 1.2")
+        expect(dependencies.fetch("Az.Exact").version).to eq("1.2.3")
+        expect(dependencies.fetch("Az.Exact").requirements.first.fetch(:requirement)).to eq("= 1.2.3")
+        expect(dependencies.fetch("Az.Maximum").requirements.first.fetch(:requirement)).to eq("<= 1.2.3.4")
+      end
+    end
+
     context "when a hashtable entry has no version field" do
       let(:manifest_file) do
         Dependabot::DependencyFile.new(

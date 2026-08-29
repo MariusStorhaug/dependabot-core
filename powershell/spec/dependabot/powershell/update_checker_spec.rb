@@ -307,6 +307,16 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
       end
     end
 
+    context "when an exact pin differs from the latest version only by leading zeroes" do
+      let(:available_versions) { ["1.2"] }
+      let(:dependency_version) { "01.02" }
+      let(:dependency_requirement) { "= 01.02" }
+
+      it "is up to date" do
+        expect(checker.up_to_date?).to be(true)
+      end
+    end
+
     context "when the dependency has no version and a bounded range requirement" do
       let(:dependency_version) { nil }
       let(:dependency_requirement) { ">= 1.0.0, <= 6.0.0" }

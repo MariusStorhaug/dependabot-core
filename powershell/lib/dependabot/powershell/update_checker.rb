@@ -5,6 +5,7 @@ require "sorbet-runtime"
 
 require "dependabot/update_checkers"
 require "dependabot/update_checkers/base"
+require "dependabot/powershell/module_specification_version"
 
 module Dependabot
   module Powershell
@@ -59,7 +60,15 @@ module Dependabot
 
       sig { override.returns(T::Boolean) }
       def version_up_to_date?
-        return latest_version.to_s == T.must(dependency.version) if exact_pin?
+        if exact_pin?
+          current_version = T.must(dependency.version)
+          candidate_version = latest_version.to_s
+          comparison = ModuleSpecificationVersion.compare(current_version, candidate_version)
+
+          return comparison.zero? if comparison
+
+          return candidate_version == current_version
+        end
 
         super
       end
