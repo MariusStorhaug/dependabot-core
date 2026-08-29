@@ -128,7 +128,7 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
       let(:dependency_version) { "1.1" }
       let(:dependency_requirement) { "= 1.1" }
 
-      it "selects the longer native version regardless of registry order" do
+      it "preserves registry discovery and selects the longer native version regardless of registry order" do
         [%w(1.2 1.2.0), %w(1.2.0 1.2)].each do |versions|
           body = feed_xml(entries: versions.map { |version| entry_xml(version: version) })
           stub_request(:get, find_packages_by_id_url).to_return(status: 200, body: body)
@@ -140,6 +140,7 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
             security_advisories: security_advisories
           )
 
+          expect(fresh_checker.latest_version.to_s).to eq(versions.last)
           expect(fresh_checker.latest_resolvable_version.to_s).to eq("1.2.0")
         end
       end
@@ -443,6 +444,61 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
           previous_version: "0.12"
         )
         expect(updated_dependency.requirements.first.requirement).to eq("= 0.12.0")
+      end
+    end
+
+    context "when exact pins are equal under registry SemVer but not native comparison" do
+      it "uses the native-sorted declaration candidate for freshness regardless of registry order" do
+        [%w(1.2 1.2.0), %w(1.2.0 1.2)].each do |versions|
+          body = feed_xml(entries: versions.map { |version| entry_xml(version: version) })
+          stub_request(:get, find_packages_by_id_url).to_return(status: 200, body: body)
+
+          current = Dependabot::Dependency.new(
+            name: "Pester",
+            version: "1.2.0",
+            requirements: [requirements.first.merge(requirement: "= 1.2.0")],
+            package_manager: "powershell"
+          )
+          fresh_checker = described_class.new(
+            dependency: current,
+            dependency_files: [],
+            credentials: [],
+            ignored_versions: ignored_versions,
+            security_advisories: security_advisories
+          )
+
+          expect(fresh_checker.up_to_date?).to be(true)
+          expect(fresh_checker.can_update?(requirements_to_unlock: :own)).to be(false)
+          expect(fresh_checker.updated_dependencies(requirements_to_unlock: :own)).to be_empty
+        end
+      end
+
+      it "allows the shorter exact pin to update regardless of registry order" do
+        [%w(1.2 1.2.0), %w(1.2.0 1.2)].each do |versions|
+          body = feed_xml(entries: versions.map { |version| entry_xml(version: version) })
+          stub_request(:get, find_packages_by_id_url).to_return(status: 200, body: body)
+
+          current = Dependabot::Dependency.new(
+            name: "Pester",
+            version: "1.2",
+            requirements: [requirements.first.merge(requirement: "= 1.2")],
+            package_manager: "powershell"
+          )
+          fresh_checker = described_class.new(
+            dependency: current,
+            dependency_files: [],
+            credentials: [],
+            ignored_versions: ignored_versions,
+            security_advisories: security_advisories
+          )
+
+          expect(fresh_checker.up_to_date?).to be(false)
+          expect(fresh_checker.can_update?(requirements_to_unlock: :own)).to be(true)
+          expect(fresh_checker.updated_dependencies(requirements_to_unlock: :own).first).to have_attributes(
+            version: "1.2.0",
+            previous_version: "1.2"
+          )
+        end
       end
     end
 
