@@ -17,12 +17,28 @@ module Dependabot
   module Powershell
     module Package
       class PackageDetailsFetcher
+        # The gallery exposes a NuGet v2 OData feed. FindPackagesById returns
+        # every published version and paginates through Atom next links.
         class PowershellGalleryFetcher
           extend T::Sig
 
-          sig { params(dependency: Dependabot::Dependency).void }
-          def initialize(dependency:)
+          API_BASE = "https://www.powershellgallery.com/api/v2"
+          WEB_BASE = "https://www.powershellgallery.com"
+          SOURCE = T.let(
+            { type: "registry", url: API_BASE }.freeze,
+            T::Hash[Symbol, String]
+          )
+          UNLISTED_PUBLISHED_DATE = "1900-01-01T00:00:00"
+          MANIFEST_GUID_PATTERN = /
+            ['"]?GUID['"]?\s*\\?=\s*['"]
+            (?<guid>[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})
+            ['"]
+          /ix
+
+          sig { params(dependency: Dependabot::Dependency, max_pages: Integer).void }
+          def initialize(dependency:, max_pages:)
             @dependency = dependency
+            @max_pages = max_pages
           end
 
           sig { returns(T::Array[Dependabot::Package::PackageRelease]) }
@@ -76,13 +92,13 @@ module Dependabot
             ).returns(String)
           end
           def prepare_page_url(next_url, visited_urls, pages)
-            page_limit_error = "PowerShell Gallery feed for #{dependency.name} exceeded the #{MAX_PAGES}-page limit"
-            raise Dependabot::DependencyFileNotResolvable, page_limit_error if pages >= MAX_PAGES
+            page_limit_error = "PowerShell Gallery feed for #{dependency.name} exceeded the #{@max_pages}-page limit"
+            raise Dependabot::DependencyFileNotResolvable, page_limit_error if pages >= @max_pages
 
-            current_url = URI.join("#{PSGALLERY_API_BASE}/", next_url).to_s
+            current_url = URI.join("#{API_BASE}/", next_url).to_s
             uri = URI(current_url)
             invalid_url_error = "PowerShell Gallery response for #{dependency.name} contained an invalid pagination URL"
-            valid_uri = uri.scheme == "https" && uri.host == URI(PSGALLERY_API_BASE).host
+            valid_uri = uri.scheme == "https" && uri.host == URI(API_BASE).host
             raise Dependabot::DependencyFileNotResolvable, invalid_url_error unless valid_uri
 
             repeated_url_error = "PowerShell Gallery response for #{dependency.name} repeated a pagination URL"
@@ -103,12 +119,12 @@ module Dependabot
             message = "PowerShell Gallery returned HTTP #{response.status} while fetching #{dependency.name}"
             raise Dependabot::RegistryError.new(response.status, message)
           rescue Excon::Error::Timeout
-            raise Dependabot::PrivateSourceTimedOut.new(PSGALLERY_API_BASE), cause: nil
+            raise Dependabot::PrivateSourceTimedOut.new(API_BASE), cause: nil
           rescue Excon::Error::Certificate
-            raise Dependabot::PrivateSourceCertificateFailure.new(PSGALLERY_API_BASE), cause: nil
+            raise Dependabot::PrivateSourceCertificateFailure.new(API_BASE), cause: nil
           rescue Excon::Error::Socket
             message = "PowerShell Gallery returned a broken response while fetching #{dependency.name}"
-            raise Dependabot::PrivateSourceBadResponse.new(PSGALLERY_API_BASE, message), cause: nil
+            raise Dependabot::PrivateSourceBadResponse.new(API_BASE, message), cause: nil
           end
 
           sig { params(body: String).returns(Nokogiri::XML::Document) }
@@ -128,13 +144,13 @@ module Dependabot
           sig { returns(String) }
           def find_packages_by_id_url
             escaped_id = CGI.escape("'#{dependency.name}'")
-            "#{PSGALLERY_API_BASE}/FindPackagesById()?id=#{escaped_id}"
+            "#{API_BASE}/FindPackagesById()?id=#{escaped_id}"
           end
 
           sig { params(version: String).returns(String) }
           def module_manifest_url(version)
             module_name = CGI.escape(dependency.name)
-            "#{PSGALLERY_WEB_BASE}/packages/#{module_name}/#{CGI.escape(version)}/Content/#{module_name}.psd1"
+            "#{WEB_BASE}/packages/#{module_name}/#{CGI.escape(version)}/Content/#{module_name}.psd1"
           end
 
           sig { params(document: Nokogiri::XML::Document).returns(T.nilable(String)) }
