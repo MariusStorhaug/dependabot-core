@@ -22,10 +22,12 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
     expect(described_class::InvalidMarPagination).to be < described_class::InvalidMarResponse
   end
 
-  it "supports loading the MAR registry directly" do
-    code = 'require "dependabot/powershell/package/package_details_fetcher/mar_registry"'
-    _stdout, stderr, status = Open3.capture3(Gem.ruby, "-Ilib", "-e", code)
+  %w(mar_fetcher mar_registry powershell_gallery_fetcher).each do |helper|
+    it "supports loading #{helper} directly" do
+      code = %(require "dependabot/powershell/package/package_details_fetcher/#{helper}")
+      _stdout, stderr, status = Open3.capture3(Gem.ruby, "-Ilib", "-e", code)
 
-    expect(status).to be_success, stderr
+      expect(status).to be_success, stderr
+    end
   end
 end

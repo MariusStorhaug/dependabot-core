@@ -22,18 +22,9 @@ module Dependabot
         class PowershellGalleryFetcher
           extend T::Sig
 
-          API_BASE = "https://www.powershellgallery.com/api/v2"
-          WEB_BASE = "https://www.powershellgallery.com"
-          SOURCE = T.let(
-            { type: "registry", url: API_BASE }.freeze,
-            T::Hash[Symbol, String]
-          )
-          UNLISTED_PUBLISHED_DATE = "1900-01-01T00:00:00"
-          MANIFEST_GUID_PATTERN = /
-            ['"]?GUID['"]?\s*\\?=\s*['"]
-            (?<guid>[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})
-            ['"]
-          /ix
+          API_BASE = PSGALLERY_API_BASE
+          WEB_BASE = PSGALLERY_WEB_BASE
+          SOURCE = PSGALLERY_SOURCE
 
           sig { params(dependency: Dependabot::Dependency, max_pages: Integer).void }
           def initialize(dependency:, max_pages:)

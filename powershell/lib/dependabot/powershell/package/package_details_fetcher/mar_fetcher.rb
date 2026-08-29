@@ -18,18 +18,13 @@ module Dependabot
         class MarFetcher
           extend T::Sig
 
-          class InvalidResponse < StandardError; end
-          class InvalidPagination < InvalidResponse; end
-
-          API_BASE = T.let("https://#{MAR_HOST}".freeze, String)
-          REPOSITORY_PREFIX = "psresource/"
-          OPEN_TIMEOUT_IN_SECONDS = 2
-          READ_TIMEOUT_IN_SECONDS = 60
-          SOURCE = T.let(
-            { type: "registry", url: API_BASE }.freeze,
-            T::Hash[Symbol, String]
-          )
-          GUID_PATTERN = /\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i
+          InvalidResponse = InvalidMarResponse
+          InvalidPagination = InvalidMarPagination
+          API_BASE = MAR_API_BASE
+          REPOSITORY_PREFIX = MAR_REPOSITORY_PREFIX
+          OPEN_TIMEOUT_IN_SECONDS = MAR_OPEN_TIMEOUT_IN_SECONDS
+          READ_TIMEOUT_IN_SECONDS = MAR_READ_TIMEOUT_IN_SECONDS
+          SOURCE = MAR_SOURCE
 
           sig { params(dependency: Dependabot::Dependency, max_pages: Integer).void }
           def initialize(dependency:, max_pages:)

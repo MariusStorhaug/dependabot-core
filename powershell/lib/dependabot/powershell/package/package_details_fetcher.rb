@@ -16,30 +16,39 @@ module Dependabot
       class PackageDetailsFetcher
         extend T::Sig
 
+        class InvalidMarResponse < StandardError; end
+        class InvalidMarPagination < InvalidMarResponse; end
+
         MAR_HOST = "mcr.microsoft.com"
-
-        require_relative "package_details_fetcher/mar_registry"
-        require_relative "package_details_fetcher/mar_fetcher"
-        require_relative "package_details_fetcher/powershell_gallery_fetcher"
-
-        InvalidMarResponse = MarFetcher::InvalidResponse
-        InvalidMarPagination = MarFetcher::InvalidPagination
-
-        PSGALLERY_API_BASE = PowershellGalleryFetcher::API_BASE
-        MAR_API_BASE = MarFetcher::API_BASE
-        MAR_REPOSITORY_PREFIX = MarFetcher::REPOSITORY_PREFIX
-        MAR_OPEN_TIMEOUT_IN_SECONDS = MarFetcher::OPEN_TIMEOUT_IN_SECONDS
-        MAR_READ_TIMEOUT_IN_SECONDS = MarFetcher::READ_TIMEOUT_IN_SECONDS
-        MAR_SOURCE = MarFetcher::SOURCE
-        PSGALLERY_SOURCE = PowershellGalleryFetcher::SOURCE
+        PSGALLERY_API_BASE = "https://www.powershellgallery.com/api/v2"
+        MAR_API_BASE = "https://mcr.microsoft.com"
+        MAR_REPOSITORY_PREFIX = "psresource/"
+        MAR_OPEN_TIMEOUT_IN_SECONDS = 2
+        MAR_READ_TIMEOUT_IN_SECONDS = 60
+        MAR_SOURCE = T.let(
+          { type: "registry", url: MAR_API_BASE }.freeze,
+          T::Hash[Symbol, String]
+        )
+        PSGALLERY_SOURCE = T.let(
+          { type: "registry", url: PSGALLERY_API_BASE }.freeze,
+          T::Hash[Symbol, String]
+        )
 
         # Defends against pathological or looping registry pagination.
         MAX_PAGES = 25
 
-        UNLISTED_PUBLISHED_DATE = PowershellGalleryFetcher::UNLISTED_PUBLISHED_DATE
-        PSGALLERY_WEB_BASE = PowershellGalleryFetcher::WEB_BASE
-        MANIFEST_GUID_PATTERN = PowershellGalleryFetcher::MANIFEST_GUID_PATTERN
-        GUID_PATTERN = MarFetcher::GUID_PATTERN
+        UNLISTED_PUBLISHED_DATE = "1900-01-01T00:00:00"
+        PSGALLERY_WEB_BASE = "https://www.powershellgallery.com"
+        MANIFEST_GUID_PATTERN = /
+          ['"]?GUID['"]?\s*\\?=\s*['"]
+          (?<guid>[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})
+          ['"]
+        /ix
+        GUID_PATTERN = /\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i
+
+        require_relative "package_details_fetcher/mar_registry"
+        require_relative "package_details_fetcher/mar_fetcher"
+        require_relative "package_details_fetcher/powershell_gallery_fetcher"
 
         sig { params(dependency: Dependabot::Dependency).void }
         def initialize(dependency:)
@@ -59,8 +68,8 @@ module Dependabot
 
         sig { returns(T.nilable(T::Hash[Symbol, String])) }
         def selected_source
-          return MarFetcher::SOURCE if @registry_source == :mar
-          return PowershellGalleryFetcher::SOURCE if @registry_source == :psgallery
+          return MAR_SOURCE if @registry_source == :mar
+          return PSGALLERY_SOURCE if @registry_source == :psgallery
 
           nil
         end
