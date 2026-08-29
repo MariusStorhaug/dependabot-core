@@ -286,6 +286,48 @@ RSpec.describe Dependabot::Powershell::FileParser do
       end
     end
 
+    context "when module specification versions use signed or boundary components" do
+      let(:manifest_file) do
+        Dependabot::DependencyFile.new(
+          name: "BoundaryVersions.psd1",
+          content: <<~POWERSHELL
+            @{
+              ModuleVersion = '1.0.0'
+              RequiredModules = @(
+                @{ ModuleName = 'Az.SignedZero'; ModuleVersion = '-0.2' },
+                @{ ModuleName = 'Az.LeadingPlus'; RequiredVersion = '+1.2' },
+                @{ ModuleName = 'Az.InnerPlus'; MaximumVersion = '1.+2' },
+                @{ ModuleName = 'Az.InnerWhitespace'; ModuleVersion = '1 . 2' },
+                @{ ModuleName = 'Az.OuterWhitespace'; RequiredVersion = ' 1.2 ' },
+                @{ ModuleName = 'Az.MaxInt'; MaximumVersion = '1.2147483647' },
+                @{ ModuleName = 'Az.Negative'; ModuleVersion = '-1.2' },
+                @{ ModuleName = 'Az.Overflow'; ModuleVersion = '2147483648.0' }
+              )
+            }
+          POWERSHELL
+        )
+      end
+
+      it "matches native signed, whitespace, and Int32 boundary behavior" do
+        dependencies = parser.parse.to_h { |dependency| [dependency.name, dependency] }
+
+        expect(dependencies.keys).to contain_exactly(
+          "Az.SignedZero",
+          "Az.LeadingPlus",
+          "Az.InnerPlus",
+          "Az.InnerWhitespace",
+          "Az.OuterWhitespace",
+          "Az.MaxInt"
+        )
+        expect(dependencies.fetch("Az.SignedZero").requirements.first.fetch(:requirement)).to eq(">= 0.2")
+        expect(dependencies.fetch("Az.LeadingPlus").version).to eq("1.2")
+        expect(dependencies.fetch("Az.InnerPlus").requirements.first.fetch(:requirement)).to eq("<= 1.2")
+        expect(dependencies.fetch("Az.InnerWhitespace").requirements.first.fetch(:requirement)).to eq(">= 1.2")
+        expect(dependencies.fetch("Az.OuterWhitespace").version).to eq("1.2")
+        expect(dependencies.fetch("Az.MaxInt").requirements.first.fetch(:requirement)).to eq("<= 1.2147483647")
+      end
+    end
+
     context "when a hashtable entry has no version field" do
       let(:manifest_file) do
         Dependabot::DependencyFile.new(

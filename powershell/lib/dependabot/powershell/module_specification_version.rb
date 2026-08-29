@@ -12,7 +12,7 @@ module Dependabot
       MAX_COMPONENT = 2_147_483_647
       MIN_COMPONENT_COUNT = 2
       MAX_COMPONENT_COUNT = 4
-      COMPONENT_PATTERN = /\A\s*\+?[0-9]+\s*\z/
+      COMPONENT_PATTERN = /\A\s*[+-]?[0-9]+\s*\z/
 
       sig { params(version: String).returns(T.nilable(ModuleSpecificationVersion)) }
       def self.parse(version)
@@ -21,7 +21,7 @@ module Dependabot
         return unless components.all? { |component| component.match?(COMPONENT_PATTERN) }
 
         numeric_components = components.map { |component| Integer(component, 10) }
-        return unless numeric_components.all? { |component| component <= MAX_COMPONENT }
+        return unless numeric_components.all? { |component| component.between?(0, MAX_COMPONENT) }
 
         new(numeric_components)
       end
