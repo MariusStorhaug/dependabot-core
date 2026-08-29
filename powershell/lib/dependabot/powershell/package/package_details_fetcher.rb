@@ -33,6 +33,8 @@ module Dependabot
       class PackageDetailsFetcher
         extend T::Sig
 
+        require_relative "package_details_fetcher/mar_registry"
+
         class InvalidMarResponse < StandardError; end
 
         PSGALLERY_API_BASE = "https://www.powershellgallery.com/api/v2"
@@ -350,6 +352,11 @@ module Dependabot
           raise Dependabot::PrivateSourceAuthenticationFailure, MAR_API_BASE
         rescue DockerRegistry2::RegistryUnknownException
           raise Dependabot::PrivateSourceTimedOut, MAR_API_BASE
+        rescue DockerRegistry2::NotFound
+          raise Dependabot::RegistryError.new(
+            404,
+            "Microsoft Artifact Registry returned HTTP 404 for #{dependency.name} #{version} manifest"
+          )
         rescue DockerRegistry2::RegistryHTTPException => e
           raise_mar_registry_error(e)
         rescue JSON::ParserError
@@ -365,7 +372,7 @@ module Dependabot
         sig { returns(DockerRegistry2::Registry) }
         def docker_registry_client
           @docker_registry_client ||= T.let(
-            DockerRegistry2::Registry.new(
+            MarRegistry.new(
               MAR_API_BASE,
               user: nil,
               password: nil,
@@ -420,22 +427,9 @@ module Dependabot
           )
         end
 
-        sig { params(error: DockerRegistry2::RegistryHTTPException).returns(Integer) }
-        def registry_http_status(error)
-          if error.respond_to?(:status)
-            status = error.method(:status).call
-            return status if status.is_a?(Integer)
-          end
-
-          status = error.message[/status (\d+)/, 1]
-          return status.to_i if status
-
-          raise error
-        end
-
         sig { params(error: DockerRegistry2::RegistryHTTPException).returns(T.noreturn) }
         def raise_mar_registry_error(error)
-          status = registry_http_status(error)
+          status = MarRegistry.http_status(error)
           raise Dependabot::RegistryError.new(
             status,
             "Microsoft Artifact Registry returned HTTP #{status} while fetching #{dependency.name}"

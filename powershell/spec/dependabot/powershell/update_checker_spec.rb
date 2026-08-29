@@ -442,7 +442,7 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
         )
       end
 
-      context "when the selected MAR manifest returns an HTTP error" do
+      context "when the selected MAR manifest returns a server error" do
         let(:mar_manifest_status) { 503 }
         let(:mar_manifest_body) { "" }
 
@@ -450,6 +450,18 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
           expect { checker.updated_dependencies(requirements_to_unlock: :own) }
             .to raise_error(Dependabot::RegistryError) do |error|
               expect(error.status).to eq(503)
+            end
+        end
+      end
+
+      context "when the selected MAR manifest is not found" do
+        let(:mar_manifest_status) { 404 }
+        let(:mar_manifest_body) { "" }
+
+        it "does not emit a version update with the stale GUID" do
+          expect { checker.updated_dependencies(requirements_to_unlock: :own) }
+            .to raise_error(Dependabot::RegistryError) do |error|
+              expect(error.status).to eq(404)
             end
         end
       end

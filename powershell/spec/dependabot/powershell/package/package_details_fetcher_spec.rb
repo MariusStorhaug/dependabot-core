@@ -259,6 +259,25 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
       end
     end
 
+    context "when the Microsoft Artifact Registry token endpoint is not found" do
+      before do
+        stub_request(:get, mar_tags_url).to_return(
+          status: 401,
+          headers: {
+            "Www-Authenticate" =>
+              'Bearer realm="https://mcr.microsoft.com/oauth2/token",service="mcr.microsoft.com",' \
+              'scope="repository:psresource/pester:pull"'
+          }
+        )
+        stub_request(:get, %r{\Ahttps://mcr\.microsoft\.com/oauth2/token}).to_return(status: 404, body: "")
+      end
+
+      it "raises an authentication error instead of treating the module as absent" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::PrivateSourceAuthenticationFailure)
+        expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
+      end
+    end
+
     context "when Microsoft Artifact Registry times out" do
       before do
         stub_request(:get, mar_tags_url).to_raise(DockerRegistry2::RegistryUnknownException)
