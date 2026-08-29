@@ -16,6 +16,8 @@ module Dependabot
       class PackageDetailsFetcher
         extend T::Sig
 
+        MAR_HOST = "mcr.microsoft.com"
+
         require_relative "package_details_fetcher/mar_registry"
         require_relative "package_details_fetcher/mar_fetcher"
         require_relative "package_details_fetcher/powershell_gallery_fetcher"
