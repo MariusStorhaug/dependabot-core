@@ -46,7 +46,7 @@ module Dependabot
           releases = filter_prerelease_versions(releases)
           releases = filter_ignored_versions(releases)
           releases = filter_module_specification_versions(releases)
-          releases.max_by(&:version)&.version
+          releases.max { |left, right| compare_module_specification_releases(left, right) }&.version
         end
 
         protected
@@ -120,6 +120,21 @@ module Dependabot
         end
         def filter_module_specification_versions(releases)
           releases.select { |release| ModuleSpecificationVersion.parse(release.version.to_s) }
+        end
+
+        sig do
+          params(
+            left: Dependabot::Package::PackageRelease,
+            right: Dependabot::Package::PackageRelease
+          ).returns(Integer)
+        end
+        def compare_module_specification_releases(left, right)
+          left_version = left.to_s
+          right_version = right.to_s
+          comparison = T.must(ModuleSpecificationVersion.compare(left_version, right_version))
+          return comparison unless comparison.zero?
+
+          left_version <=> right_version
         end
 
         sig { returns(Dependabot::Powershell::Package::PackageDetailsFetcher) }

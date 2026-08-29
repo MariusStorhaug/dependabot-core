@@ -90,9 +90,9 @@ module Dependabot
 
         [
           T.must(match[1]).to_i,
-          (match[2] || "0").to_i,
-          (match[3] || "0").to_i,
-          (match[4] || "0").to_i
+          (match[2] || "-1").to_i,
+          (match[3] || "-1").to_i,
+          (match[4] || "-1").to_i
         ]
       end
       private_class_method :numeric_components
