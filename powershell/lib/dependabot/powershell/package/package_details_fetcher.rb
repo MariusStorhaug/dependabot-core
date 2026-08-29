@@ -152,21 +152,19 @@ module Dependabot
           end
         rescue DockerRegistry2::RegistryAuthenticationException,
                DockerRegistry2::RegistryAuthorizationException
-          raise Dependabot::PrivateSourceAuthenticationFailure, MAR_API_BASE, cause: nil
+          raise Dependabot::PrivateSourceAuthenticationFailure.new(MAR_API_BASE), cause: nil
         rescue DockerRegistry2::RegistryUnknownException
-          raise Dependabot::PrivateSourceTimedOut, MAR_API_BASE, cause: nil
+          raise Dependabot::PrivateSourceTimedOut.new(MAR_API_BASE), cause: nil
         rescue DockerRegistry2::RegistrySSLException
-          raise Dependabot::PrivateSourceCertificateFailure, MAR_API_BASE, cause: nil
+          raise Dependabot::PrivateSourceCertificateFailure.new(MAR_API_BASE), cause: nil
         rescue DockerRegistry2::RegistryHTTPException => e
           raise MarRegistry.registry_error(e, dependency.name), cause: nil
         rescue InvalidMarPagination
-          raise Dependabot::DependencyFileNotResolvable,
-                "Microsoft Artifact Registry response for #{dependency.name} contained invalid pagination data",
-                cause: nil
+          message = "Microsoft Artifact Registry response for #{dependency.name} contained invalid pagination data"
+          raise Dependabot::DependencyFileNotResolvable.new(message), cause: nil
         rescue JSON::ParserError, InvalidMarResponse
-          raise Dependabot::DependencyFileNotResolvable,
-                "Microsoft Artifact Registry response for #{dependency.name} was malformed or incomplete",
-                cause: nil
+          message = "Microsoft Artifact Registry response for #{dependency.name} was malformed or incomplete"
+          raise Dependabot::DependencyFileNotResolvable.new(message), cause: nil
         end
 
         sig { returns(T.nilable(T::Array[String])) }
@@ -306,9 +304,8 @@ module Dependabot
           visited_urls[current_url] = true
           current_url
         rescue URI::Error
-          raise Dependabot::DependencyFileNotResolvable,
-                "PowerShell Gallery response for #{dependency.name} contained an invalid pagination URL",
-                cause: nil
+          message = "PowerShell Gallery response for #{dependency.name} contained an invalid pagination URL"
+          raise Dependabot::DependencyFileNotResolvable.new(message), cause: nil
         end
 
         sig { params(url: String).returns(Excon::Response) }
@@ -319,9 +316,9 @@ module Dependabot
           message = "PowerShell Gallery returned HTTP #{response.status} while fetching #{dependency.name}"
           raise Dependabot::RegistryError.new(response.status, message)
         rescue Excon::Error::Timeout
-          raise Dependabot::PrivateSourceTimedOut, PSGALLERY_API_BASE, cause: nil
+          raise Dependabot::PrivateSourceTimedOut.new(PSGALLERY_API_BASE), cause: nil
         rescue Excon::Error::Certificate
-          raise Dependabot::PrivateSourceCertificateFailure, PSGALLERY_API_BASE, cause: nil
+          raise Dependabot::PrivateSourceCertificateFailure.new(PSGALLERY_API_BASE), cause: nil
         rescue Excon::Error::Socket
           message = "PowerShell Gallery returned a broken response while fetching #{dependency.name}"
           raise Dependabot::PrivateSourceBadResponse.new(PSGALLERY_API_BASE, message), cause: nil
@@ -336,9 +333,8 @@ module Dependabot
 
           document
         rescue Nokogiri::XML::SyntaxError
-          raise Dependabot::DependencyFileNotResolvable,
-                "PowerShell Gallery returned malformed XML for #{dependency.name}",
-                cause: nil
+          message = "PowerShell Gallery returned malformed XML for #{dependency.name}"
+          raise Dependabot::DependencyFileNotResolvable.new(message), cause: nil
         end
 
         sig { params(version: String).returns(String) }
@@ -352,24 +348,30 @@ module Dependabot
                 "Microsoft Artifact Registry manifest for #{dependency.name} #{version} did not contain a valid GUID"
         rescue DockerRegistry2::RegistryAuthenticationException,
                DockerRegistry2::RegistryAuthorizationException
-          raise Dependabot::PrivateSourceAuthenticationFailure, MAR_API_BASE, cause: nil
+          raise Dependabot::PrivateSourceAuthenticationFailure.new(MAR_API_BASE), cause: nil
         rescue DockerRegistry2::RegistryUnknownException
-          raise Dependabot::PrivateSourceTimedOut, MAR_API_BASE, cause: nil
+          raise Dependabot::PrivateSourceTimedOut.new(MAR_API_BASE), cause: nil
         rescue DockerRegistry2::RegistrySSLException
-          raise Dependabot::PrivateSourceCertificateFailure, MAR_API_BASE, cause: nil
+          raise Dependabot::PrivateSourceCertificateFailure.new(MAR_API_BASE), cause: nil
         rescue DockerRegistry2::NotFound
           message = "Microsoft Artifact Registry returned HTTP 404 for #{dependency.name} #{version} manifest"
           raise Dependabot::RegistryError.new(404, message), cause: nil
         rescue DockerRegistry2::RegistryHTTPException => e
           raise MarRegistry.registry_error(e, dependency.name), cause: nil
         rescue MarRegistry::InvalidManifest
-          raise Dependabot::DependencyFileNotResolvable,
-                "Microsoft Artifact Registry response for #{dependency.name} #{version} contained a malformed manifest",
-                cause: nil
+          raise(
+            Dependabot::DependencyFileNotResolvable.new(
+              "Microsoft Artifact Registry response for #{dependency.name} #{version} contained a malformed manifest"
+            ),
+            cause: nil
+          )
         rescue MarRegistry::InvalidMetadata
-          raise Dependabot::DependencyFileNotResolvable,
-                "Microsoft Artifact Registry manifest for #{dependency.name} #{version} contained malformed metadata",
-                cause: nil
+          raise(
+            Dependabot::DependencyFileNotResolvable.new(
+              "Microsoft Artifact Registry manifest for #{dependency.name} #{version} contained malformed metadata"
+            ),
+            cause: nil
+          )
         end
 
         sig { returns(String) }
