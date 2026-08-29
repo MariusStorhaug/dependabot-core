@@ -251,9 +251,10 @@ module Dependabot
           match = link.match(/<(?<url>[^>]+)>\s*;\s*rel="?next"?/i)
           raise InvalidMarPagination unless match
 
-          URI.join(response.request_url, T.must(match[:url])).to_s
-        rescue URI::Error
-          raise InvalidMarPagination, cause: nil
+          next_url = MarRegistry.resolve_tags_page_url(response.request_url, T.must(match[:url]), mar_repository_name)
+          raise InvalidMarPagination unless next_url
+
+          next_url
         end
 
         sig { returns(T::Array[Dependabot::Package::PackageRelease]) }

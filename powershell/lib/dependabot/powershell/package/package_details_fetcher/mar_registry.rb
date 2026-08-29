@@ -43,6 +43,30 @@ module Dependabot
           end
 
           sig do
+            params(
+              request_url: String,
+              link_url: String,
+              repository: String
+            ).returns(T.nilable(String))
+          end
+          def self.resolve_tags_page_url(request_url, link_url, repository)
+            return if link_url.start_with?("//")
+
+            uri = URI.join(request_url, link_url)
+            expected_path = "/v2/#{repository}/tags/list"
+            return unless uri.scheme == "https" &&
+                          uri.host == "mcr.microsoft.com" &&
+                          uri.port == 443 &&
+                          uri.userinfo.nil? &&
+                          uri.path == expected_path &&
+                          uri.fragment.nil?
+
+            uri.to_s
+          rescue URI::Error
+            nil
+          end
+
+          sig do
             params(manifest: T::Hash[String, Object]).returns(T::Hash[String, Object])
           end
           def self.manifest_metadata(manifest)

@@ -152,6 +152,107 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
         end
       end
 
+      context "when the tags response uses a same-origin absolute pagination URL" do
+        let(:next_page_url) { "#{mar_tags_url}?last=4.0.0" }
+
+        before do
+          stub_request(:get, mar_tags_url).to_return(
+            status: 200,
+            body: JSON.dump("name" => "psresource/az.accounts", "tags" => ["4.0.0"]),
+            headers: { "Link" => "<#{next_page_url}>; rel=\"next\"" }
+          )
+          stub_request(:get, next_page_url).to_return(
+            status: 200,
+            body: JSON.dump("name" => "psresource/az.accounts", "tags" => ["5.5.2"])
+          )
+        end
+
+        it "follows the link and combines every page" do
+          expect(fetcher.fetch.releases.map { |release| release.version.to_s }).to contain_exactly("4.0.0", "5.5.2")
+        end
+      end
+
+      context "when the tags response uses an explicit HTTPS default port" do
+        let(:next_page_url) do
+          "https://mcr.microsoft.com:443/v2/psresource/az.accounts/tags/list?last=4.0.0"
+        end
+
+        before do
+          stub_request(:get, mar_tags_url).to_return(
+            status: 200,
+            body: JSON.dump("name" => "psresource/az.accounts", "tags" => ["4.0.0"]),
+            headers: { "Link" => "<#{next_page_url}>; rel=\"next\"" }
+          )
+          stub_request(:get, next_page_url).to_return(
+            status: 200,
+            body: JSON.dump("name" => "psresource/az.accounts", "tags" => ["5.5.2"])
+          )
+        end
+
+        it "follows the link and combines every page" do
+          expect(fetcher.fetch.releases.map { |release| release.version.to_s }).to contain_exactly("4.0.0", "5.5.2")
+        end
+      end
+
+      {
+        "scheme-relative URL" => [
+          "//mcr.microsoft.com/v2/psresource/az.accounts/tags/list?access_token=MAR_LINK_SECRET",
+          "https://mcr.microsoft.com/v2/psresource/az.accounts/tags/list?access_token=MAR_LINK_SECRET"
+        ],
+        "HTTP URL" => [
+          "http://mcr.microsoft.com/v2/psresource/az.accounts/tags/list?access_token=MAR_LINK_SECRET",
+          "http://mcr.microsoft.com/v2/psresource/az.accounts/tags/list?access_token=MAR_LINK_SECRET"
+        ],
+        "external host" => [
+          "https://registry.example/v2/psresource/az.accounts/tags/list?access_token=MAR_LINK_SECRET",
+          "https://registry.example/v2/psresource/az.accounts/tags/list?access_token=MAR_LINK_SECRET"
+        ],
+        "subdomain host" => [
+          "https://mcr.microsoft.com.registry.example/v2/psresource/az.accounts/tags/list?" \
+          "access_token=MAR_LINK_SECRET",
+          "https://mcr.microsoft.com.registry.example/v2/psresource/az.accounts/tags/list?" \
+          "access_token=MAR_LINK_SECRET"
+        ],
+        "credentialed URL" => [
+          "https://user:MAR_LINK_SECRET@mcr.microsoft.com/v2/psresource/az.accounts/tags/list",
+          "https://user:MAR_LINK_SECRET@mcr.microsoft.com/v2/psresource/az.accounts/tags/list"
+        ],
+        "alternate port" => [
+          "https://mcr.microsoft.com:444/v2/psresource/az.accounts/tags/list?access_token=MAR_LINK_SECRET",
+          "https://mcr.microsoft.com:444/v2/psresource/az.accounts/tags/list?access_token=MAR_LINK_SECRET"
+        ],
+        "wrong path" => [
+          "https://mcr.microsoft.com/v2/psresource/other/tags/list?access_token=MAR_LINK_SECRET",
+          "https://mcr.microsoft.com/v2/psresource/other/tags/list?access_token=MAR_LINK_SECRET"
+        ]
+      }.each do |description, (link_url, requested_url)|
+        context "when the tags response uses a #{description}" do
+          let(:secret) { "MAR_LINK_SECRET" }
+
+          before do
+            stub_request(:get, mar_tags_url).to_return(
+              status: 200,
+              body: JSON.dump("name" => "psresource/az.accounts", "tags" => ["4.0.0"]),
+              headers: { "Link" => "<#{link_url}>; rel=\"next\"" }
+            )
+            stub_request(:get, requested_url).to_return(
+              status: 200,
+              body: JSON.dump("name" => "psresource/az.accounts", "tags" => ["5.5.2"])
+            )
+          end
+
+          it "rejects the link without making the request or exposing its contents" do
+            expect { fetcher.fetch }.to raise_error(Dependabot::DependencyFileNotResolvable) do |error|
+              expect(error.message).to include("Microsoft Artifact Registry", "Az.Accounts", "pagination")
+              expect(error.full_message).not_to include(secret, "access_token")
+              expect(error.cause).to be_nil
+            end
+            expect(a_request(:get, requested_url)).not_to have_been_made
+            expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
+          end
+        end
+      end
+
       context "when a later tags page is not found" do
         before do
           stub_request(:get, mar_tags_url).to_return(
