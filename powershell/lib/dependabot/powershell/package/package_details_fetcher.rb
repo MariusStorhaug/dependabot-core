@@ -1,16 +1,12 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "cgi"
 require "json"
-require "time"
 require "uri"
 require "docker_registry2"
-require "nokogiri"
 require "sorbet-runtime"
 
 require "dependabot/errors"
-require "dependabot/registry_client"
 require "dependabot/powershell"
 require "dependabot/powershell/version"
 require "dependabot/package/package_release"
@@ -34,6 +30,7 @@ module Dependabot
         extend T::Sig
 
         require_relative "package_details_fetcher/mar_registry"
+        require_relative "package_details_fetcher/powershell_gallery_fetcher"
 
         class InvalidMarResponse < StandardError; end
         class InvalidMarPagination < InvalidMarResponse; end
@@ -73,6 +70,7 @@ module Dependabot
         def initialize(dependency:)
           @dependency = dependency
           @registry_source = T.let(nil, T.nilable(Symbol))
+          @powershell_gallery_fetcher = T.let(nil, T.nilable(PowershellGalleryFetcher))
         end
 
         sig { returns(Dependabot::Dependency) }
@@ -103,7 +101,7 @@ module Dependabot
         def manifest_guid_for(version)
           return mar_manifest_guid_for(version) if @registry_source == :mar
 
-          psgallery_manifest_guid_for(version)
+          powershell_gallery_fetcher.manifest_guid_for(version)
         end
 
         sig { returns(T::Array[Dependabot::Package::PackageRelease]) }
@@ -115,22 +113,10 @@ module Dependabot
           end
 
           @registry_source = :psgallery
-          fetch_psgallery_package_releases
+          powershell_gallery_fetcher.fetch_releases
         end
 
         private
-
-        sig { params(version: String).returns(String) }
-        def psgallery_manifest_guid_for(version)
-          response = fetch_psgallery_page(module_manifest_url(version))
-
-          manifest = Nokogiri::HTML(response.body).text.tr("\u00a0", " ")
-          guid = MANIFEST_GUID_PATTERN.match(manifest)&.[](:guid)
-          return guid if guid
-
-          raise Dependabot::DependencyFileNotResolvable,
-                "PowerShell Gallery manifest for #{dependency.name} #{version} did not contain a valid GUID"
-        end
 
         sig { returns(T.nilable(T::Array[Dependabot::Package::PackageRelease])) }
         def fetch_mar_package_releases
@@ -255,88 +241,6 @@ module Dependabot
           next_url
         end
 
-        sig { returns(T::Array[Dependabot::Package::PackageRelease]) }
-        def fetch_psgallery_package_releases
-          releases = T.let([], T::Array[Dependabot::Package::PackageRelease])
-          Dependabot.logger.info("Fetching package (PowerShell Gallery) info for #{dependency.name}")
-
-          url = T.let(find_packages_by_id_url, T.nilable(String))
-          visited_urls = T.let({}, T::Hash[String, T::Boolean])
-          pages = 0
-
-          while url
-            current_url = prepare_psgallery_page_url(url, visited_urls, pages)
-            response = fetch_psgallery_page(current_url)
-            document = parse_psgallery_page(response.body)
-
-            document.css("entry").each do |entry|
-              release = build_release(entry)
-              releases << release if release
-            end
-
-            url = next_page_url(document)
-            pages += 1
-          end
-
-          releases
-        end
-
-        sig do
-          params(
-            next_url: String,
-            visited_urls: T::Hash[String, T::Boolean],
-            pages: Integer
-          ).returns(String)
-        end
-        def prepare_psgallery_page_url(next_url, visited_urls, pages)
-          page_limit_error = "PowerShell Gallery feed for #{dependency.name} exceeded the #{MAX_PAGES}-page limit"
-          raise Dependabot::DependencyFileNotResolvable, page_limit_error if pages >= MAX_PAGES
-
-          current_url = URI.join("#{PSGALLERY_API_BASE}/", next_url).to_s
-          uri = URI(current_url)
-          invalid_url_error = "PowerShell Gallery response for #{dependency.name} contained an invalid pagination URL"
-          valid_uri = uri.scheme == "https" && uri.host == URI(PSGALLERY_API_BASE).host
-          raise Dependabot::DependencyFileNotResolvable, invalid_url_error unless valid_uri
-
-          repeated_url_error = "PowerShell Gallery response for #{dependency.name} repeated a pagination URL"
-          raise Dependabot::DependencyFileNotResolvable, repeated_url_error if visited_urls[current_url]
-
-          visited_urls[current_url] = true
-          current_url
-        rescue URI::Error
-          message = "PowerShell Gallery response for #{dependency.name} contained an invalid pagination URL"
-          raise Dependabot::DependencyFileNotResolvable.new(message), cause: nil
-        end
-
-        sig { params(url: String).returns(Excon::Response) }
-        def fetch_psgallery_page(url)
-          response = Dependabot::RegistryClient.get(url:)
-          return response if response.status == 200
-
-          message = "PowerShell Gallery returned HTTP #{response.status} while fetching #{dependency.name}"
-          raise Dependabot::RegistryError.new(response.status, message)
-        rescue Excon::Error::Timeout
-          raise Dependabot::PrivateSourceTimedOut.new(PSGALLERY_API_BASE), cause: nil
-        rescue Excon::Error::Certificate
-          raise Dependabot::PrivateSourceCertificateFailure.new(PSGALLERY_API_BASE), cause: nil
-        rescue Excon::Error::Socket
-          message = "PowerShell Gallery returned a broken response while fetching #{dependency.name}"
-          raise Dependabot::PrivateSourceBadResponse.new(PSGALLERY_API_BASE, message), cause: nil
-        end
-
-        sig { params(body: String).returns(Nokogiri::XML::Document) }
-        def parse_psgallery_page(body)
-          document = Nokogiri::XML(body, &:strict)
-          document.remove_namespaces!
-          malformed_error = "PowerShell Gallery returned malformed XML for #{dependency.name}: expected a feed document"
-          raise Dependabot::DependencyFileNotResolvable, malformed_error unless document.root&.name == "feed"
-
-          document
-        rescue Nokogiri::XML::SyntaxError
-          message = "PowerShell Gallery returned malformed XML for #{dependency.name}"
-          raise Dependabot::DependencyFileNotResolvable.new(message), cause: nil
-        end
-
         sig { params(version: String).returns(String) }
         def mar_manifest_guid_for(version)
           manifest = docker_registry_client.manifest(mar_repository_name, version)
@@ -394,64 +298,9 @@ module Dependabot
           )
         end
 
-        sig { returns(String) }
-        def find_packages_by_id_url
-          escaped_id = CGI.escape("'#{dependency.name}'")
-          "#{PSGALLERY_API_BASE}/FindPackagesById()?id=#{escaped_id}"
-        end
-
-        sig { params(version: String).returns(String) }
-        def module_manifest_url(version)
-          module_name = CGI.escape(dependency.name)
-          "#{PSGALLERY_WEB_BASE}/packages/#{module_name}/#{CGI.escape(version)}/Content/#{module_name}.psd1"
-        end
-
-        sig { params(document: Nokogiri::XML::Document).returns(T.nilable(String)) }
-        def next_page_url(document)
-          next_link = document.at_css("feed > link[rel='next']") || document.at_css("link[rel='next']")
-          return unless next_link
-
-          href = next_link&.attribute("href")&.value
-          if href.nil? || href.empty?
-            raise Dependabot::DependencyFileNotResolvable,
-                  "PowerShell Gallery response for #{dependency.name} contained an invalid pagination link"
-          end
-
-          href
-        end
-
-        sig { params(entry: Nokogiri::XML::Element).returns(T.nilable(Dependabot::Package::PackageRelease)) }
-        def build_release(entry)
-          version_string = entry.at_css("properties > Version")&.text
-          return nil if version_string.nil? || version_string.empty?
-          return nil unless Powershell::Version.correct?(version_string)
-
-          published = entry.at_css("properties > Published")&.text
-          content_url = entry.at_css("content")&.attribute("src")&.value
-
-          Dependabot::Package::PackageRelease.new(
-            version: Powershell::Version.new(version_string),
-            released_at: parse_published_time(published),
-            yanked: unlisted?(published),
-            url: content_url
-          )
-        end
-
-        sig { params(published: T.nilable(String)).returns(T::Boolean) }
-        def unlisted?(published)
-          return false if published.nil? || published.empty?
-
-          published.start_with?(UNLISTED_PUBLISHED_DATE)
-        end
-
-        sig { params(published: T.nilable(String)).returns(T.nilable(Time)) }
-        def parse_published_time(published)
-          return nil if published.nil? || published.empty?
-          return nil if unlisted?(published)
-
-          Time.parse(published)
-        rescue ArgumentError
-          nil
+        sig { returns(PowershellGalleryFetcher) }
+        def powershell_gallery_fetcher
+          @powershell_gallery_fetcher ||= PowershellGalleryFetcher.new(dependency:)
         end
       end
     end
