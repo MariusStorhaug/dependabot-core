@@ -29,7 +29,7 @@ module Dependabot
           end
 
           sig do
-            params(manifest: T::Hash[String, T.anything]).returns(T::Hash[String, T.anything])
+            params(manifest: T::Hash[String, Object]).returns(T::Hash[String, Object])
           end
           def self.manifest_metadata(manifest)
             layers = manifest["layers"]
@@ -46,7 +46,7 @@ module Dependabot
             raise InvalidMetadata
           end
 
-          sig { params(repository: String, tag: String).returns(T::Hash[String, T.anything]) }
+          sig { params(repository: String, tag: String).returns(T::Hash[String, Object]) }
           def manifest(repository, tag)
             super
           rescue ArgumentError
