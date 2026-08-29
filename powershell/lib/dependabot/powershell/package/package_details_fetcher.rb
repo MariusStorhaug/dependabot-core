@@ -152,19 +152,21 @@ module Dependabot
           end
         rescue DockerRegistry2::RegistryAuthenticationException,
                DockerRegistry2::RegistryAuthorizationException
-          raise Dependabot::PrivateSourceAuthenticationFailure, MAR_API_BASE
+          raise Dependabot::PrivateSourceAuthenticationFailure, MAR_API_BASE, cause: nil
         rescue DockerRegistry2::RegistryUnknownException
-          raise Dependabot::PrivateSourceTimedOut, MAR_API_BASE
+          raise Dependabot::PrivateSourceTimedOut, MAR_API_BASE, cause: nil
         rescue DockerRegistry2::RegistrySSLException
-          raise Dependabot::PrivateSourceCertificateFailure, MAR_API_BASE
+          raise Dependabot::PrivateSourceCertificateFailure, MAR_API_BASE, cause: nil
         rescue DockerRegistry2::RegistryHTTPException => e
-          raise_mar_registry_error(e)
+          raise MarRegistry.registry_error(e, dependency.name), cause: nil
         rescue InvalidMarPagination
           raise Dependabot::DependencyFileNotResolvable,
-                "Microsoft Artifact Registry response for #{dependency.name} contained invalid pagination data"
+                "Microsoft Artifact Registry response for #{dependency.name} contained invalid pagination data",
+                cause: nil
         rescue JSON::ParserError, InvalidMarResponse
           raise Dependabot::DependencyFileNotResolvable,
-                "Microsoft Artifact Registry response for #{dependency.name} was malformed or incomplete"
+                "Microsoft Artifact Registry response for #{dependency.name} was malformed or incomplete",
+                cause: nil
         end
 
         sig { returns(T.nilable(T::Array[String])) }
@@ -205,7 +207,7 @@ module Dependabot
           visited_urls[current_url] = true
           current_url
         rescue URI::InvalidURIError
-          raise InvalidMarPagination
+          raise InvalidMarPagination, cause: nil
         end
 
         sig do
@@ -215,10 +217,8 @@ module Dependabot
           docker_registry_client.doget(current_url)
         rescue DockerRegistry2::NotFound
           unless first_page
-            raise Dependabot::RegistryError.new(
-              404,
-              "Microsoft Artifact Registry returned HTTP 404 for a later tags page for #{dependency.name}"
-            )
+            message = "Microsoft Artifact Registry returned HTTP 404 for a later tags page for #{dependency.name}"
+            raise Dependabot::RegistryError.new(404, message), cause: nil
           end
 
           Dependabot.logger.info(
@@ -252,7 +252,7 @@ module Dependabot
 
           URI.join(response.request_url, T.must(match[:url])).to_s
         rescue URI::InvalidURIError
-          raise InvalidMarPagination
+          raise InvalidMarPagination, cause: nil
         end
 
         sig { returns(T::Array[Dependabot::Package::PackageRelease]) }
@@ -305,7 +305,8 @@ module Dependabot
           current_url
         rescue URI::InvalidURIError
           raise Dependabot::DependencyFileNotResolvable,
-                "PowerShell Gallery response for #{dependency.name} contained an invalid pagination URL"
+                "PowerShell Gallery response for #{dependency.name} contained an invalid pagination URL",
+                cause: nil
         end
 
         sig { params(url: String).returns(Excon::Response) }
@@ -316,12 +317,12 @@ module Dependabot
           message = "PowerShell Gallery returned HTTP #{response.status} while fetching #{dependency.name}"
           raise Dependabot::RegistryError.new(response.status, message)
         rescue Excon::Error::Timeout
-          raise Dependabot::PrivateSourceTimedOut, PSGALLERY_API_BASE
+          raise Dependabot::PrivateSourceTimedOut, PSGALLERY_API_BASE, cause: nil
         rescue Excon::Error::Certificate
-          raise Dependabot::PrivateSourceCertificateFailure, PSGALLERY_API_BASE
+          raise Dependabot::PrivateSourceCertificateFailure, PSGALLERY_API_BASE, cause: nil
         rescue Excon::Error::Socket
           message = "PowerShell Gallery returned a broken response while fetching #{dependency.name}"
-          raise Dependabot::PrivateSourceBadResponse.new(PSGALLERY_API_BASE, message)
+          raise Dependabot::PrivateSourceBadResponse.new(PSGALLERY_API_BASE, message), cause: nil
         end
 
         sig { params(body: String).returns(Nokogiri::XML::Document) }
@@ -334,7 +335,8 @@ module Dependabot
           document
         rescue Nokogiri::XML::SyntaxError
           raise Dependabot::DependencyFileNotResolvable,
-                "PowerShell Gallery returned malformed XML for #{dependency.name}"
+                "PowerShell Gallery returned malformed XML for #{dependency.name}",
+                cause: nil
         end
 
         sig { params(version: String).returns(String) }
@@ -348,24 +350,24 @@ module Dependabot
                 "Microsoft Artifact Registry manifest for #{dependency.name} #{version} did not contain a valid GUID"
         rescue DockerRegistry2::RegistryAuthenticationException,
                DockerRegistry2::RegistryAuthorizationException
-          raise Dependabot::PrivateSourceAuthenticationFailure, MAR_API_BASE
+          raise Dependabot::PrivateSourceAuthenticationFailure, MAR_API_BASE, cause: nil
         rescue DockerRegistry2::RegistryUnknownException
-          raise Dependabot::PrivateSourceTimedOut, MAR_API_BASE
+          raise Dependabot::PrivateSourceTimedOut, MAR_API_BASE, cause: nil
         rescue DockerRegistry2::RegistrySSLException
-          raise Dependabot::PrivateSourceCertificateFailure, MAR_API_BASE
+          raise Dependabot::PrivateSourceCertificateFailure, MAR_API_BASE, cause: nil
         rescue DockerRegistry2::NotFound
-          raise Dependabot::RegistryError.new(
-            404,
-            "Microsoft Artifact Registry returned HTTP 404 for #{dependency.name} #{version} manifest"
-          )
+          message = "Microsoft Artifact Registry returned HTTP 404 for #{dependency.name} #{version} manifest"
+          raise Dependabot::RegistryError.new(404, message), cause: nil
         rescue DockerRegistry2::RegistryHTTPException => e
-          raise_mar_registry_error(e)
+          raise MarRegistry.registry_error(e, dependency.name), cause: nil
         rescue MarRegistry::InvalidManifest
           raise Dependabot::DependencyFileNotResolvable,
-                "Microsoft Artifact Registry response for #{dependency.name} #{version} contained a malformed manifest"
+                "Microsoft Artifact Registry response for #{dependency.name} #{version} contained a malformed manifest",
+                cause: nil
         rescue MarRegistry::InvalidMetadata
           raise Dependabot::DependencyFileNotResolvable,
-                "Microsoft Artifact Registry manifest for #{dependency.name} #{version} contained malformed metadata"
+                "Microsoft Artifact Registry manifest for #{dependency.name} #{version} contained malformed metadata",
+                cause: nil
         end
 
         sig { returns(String) }
@@ -428,15 +430,6 @@ module Dependabot
             released_at: parse_published_time(published),
             yanked: unlisted?(published),
             url: content_url
-          )
-        end
-
-        sig { params(error: DockerRegistry2::RegistryHTTPException).returns(T.noreturn) }
-        def raise_mar_registry_error(error)
-          status = MarRegistry.http_status(error)
-          raise Dependabot::RegistryError.new(
-            status,
-            "Microsoft Artifact Registry returned HTTP #{status} while fetching #{dependency.name}"
           )
         end
 

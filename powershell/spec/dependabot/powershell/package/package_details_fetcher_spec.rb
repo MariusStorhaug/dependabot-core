@@ -206,7 +206,8 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
         it "raises a sanitized resolvability error without falling back" do
           expect { fetcher.fetch }.to raise_error(Dependabot::DependencyFileNotResolvable) do |error|
             expect(error.message).to include("Microsoft Artifact Registry", "Az.Accounts", "pagination")
-            expect(error.message).not_to include(secret, "access_token")
+            expect(error.full_message).not_to include(secret, "access_token")
+            expect(error.cause).to be_nil
           end
           expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
         end
@@ -300,6 +301,30 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
       end
     end
 
+    context "when the Microsoft Artifact Registry bearer realm is malformed" do
+      let(:secret) { "MAR_REALM_SECRET" }
+
+      before do
+        stub_request(:get, mar_tags_url).to_return(
+          status: 401,
+          headers: {
+            "Www-Authenticate" =>
+              ["Bearer", "realm=\"https://mcr.microsoft.com/%ZZ?access_token=#{secret}\"," \
+                         "service=\"mcr.microsoft.com\""].join(" ")
+          }
+        )
+      end
+
+      it "raises a sanitized authentication error instead of exposing the realm" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::PrivateSourceAuthenticationFailure) do |error|
+          expect(error.source).to eq("https://mcr.microsoft.com")
+          expect(error.full_message).not_to include(secret, "access_token")
+          expect(error.cause).to be_nil
+        end
+        expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
+      end
+    end
+
     context "when Microsoft Artifact Registry times out" do
       before do
         stub_request(:get, mar_tags_url).to_raise(DockerRegistry2::RegistryUnknownException)
@@ -339,7 +364,8 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
       it "raises a sanitized resolvability error without falling back to the PowerShell Gallery" do
         expect { fetcher.fetch }.to raise_error(Dependabot::DependencyFileNotResolvable) do |error|
           expect(error.message).to include("Microsoft Artifact Registry", "Pester")
-          expect(error.message).not_to include(secret, "access_token")
+          expect(error.full_message).not_to include(secret, "access_token")
+          expect(error.cause).to be_nil
         end
         expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
       end
@@ -541,7 +567,8 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
       it "raises a sanitized resolvability error" do
         expect { fetcher.fetch }.to raise_error(Dependabot::DependencyFileNotResolvable) do |error|
           expect(error.message).to include("PowerShell Gallery", "XML", "Pester")
-          expect(error.message).not_to include(secret)
+          expect(error.full_message).not_to include(secret)
+          expect(error.cause).to be_nil
         end
       end
     end
@@ -578,7 +605,8 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
       it "raises a sanitized resolvability error" do
         expect { fetcher.fetch }.to raise_error(Dependabot::DependencyFileNotResolvable) do |error|
           expect(error.message).to include("PowerShell Gallery", "Pester", "pagination")
-          expect(error.message).not_to include(secret, "access_token")
+          expect(error.full_message).not_to include(secret, "access_token")
+          expect(error.cause).to be_nil
         end
       end
     end
@@ -658,6 +686,7 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
       it "raises a typed certificate error" do
         expect { fetcher.fetch }.to raise_error(Dependabot::PrivateSourceCertificateFailure) do |error|
           expect(error.source).to eq("https://www.powershellgallery.com/api/v2")
+          expect(error.cause).to be_nil
         end
       end
     end

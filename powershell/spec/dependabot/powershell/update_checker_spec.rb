@@ -467,11 +467,16 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
       end
 
       context "when the selected MAR manifest metadata is malformed" do
-        let(:mar_manifest_metadata) { "{" }
+        let(:secret) { "MAR_METADATA_SECRET" }
+        let(:mar_manifest_metadata) { %({"access_token":#{secret}}) }
 
         it "does not emit a version update with the stale GUID" do
           expect { checker.updated_dependencies(requirements_to_unlock: :own) }
-            .to raise_error(Dependabot::DependencyFileNotResolvable, /Az\.Accounts.*5\.5\.2.*metadata/i)
+            .to raise_error(Dependabot::DependencyFileNotResolvable) do |error|
+              expect(error.message).to match(/Az\.Accounts.*5\.5\.2.*metadata/i)
+              expect(error.full_message).not_to include(secret, "access_token")
+              expect(error.cause).to be_nil
+            end
         end
       end
 
@@ -485,11 +490,16 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
       end
 
       context "when the selected MAR manifest contains malformed JSON" do
-        let(:mar_manifest_body) { "{" }
+        let(:secret) { "MAR_MANIFEST_SECRET" }
+        let(:mar_manifest_body) { %({"access_token":#{secret}}) }
 
         it "does not emit a version update with the stale GUID" do
           expect { checker.updated_dependencies(requirements_to_unlock: :own) }
-            .to raise_error(Dependabot::DependencyFileNotResolvable, /Az\.Accounts.*5\.5\.2.*manifest/i)
+            .to raise_error(Dependabot::DependencyFileNotResolvable) do |error|
+              expect(error.message).to match(/Az\.Accounts.*5\.5\.2.*manifest/i)
+              expect(error.full_message).not_to include(secret, "access_token")
+              expect(error.cause).to be_nil
+            end
         end
       end
 

@@ -29,6 +29,20 @@ module Dependabot
           end
 
           sig do
+            params(
+              error: DockerRegistry2::RegistryHTTPException,
+              dependency_name: String
+            ).returns(Dependabot::RegistryError)
+          end
+          def self.registry_error(error, dependency_name)
+            status = http_status(error)
+            Dependabot::RegistryError.new(
+              status,
+              "Microsoft Artifact Registry returned HTTP #{status} while fetching #{dependency_name}"
+            )
+          end
+
+          sig do
             params(manifest: T::Hash[String, Object]).returns(T::Hash[String, Object])
           end
           def self.manifest_metadata(manifest)
@@ -43,7 +57,7 @@ module Dependabot
 
             metadata
           rescue JSON::ParserError
-            raise InvalidMetadata
+            raise InvalidMetadata, cause: nil
           end
 
           sig { params(repository: String, tag: String).returns(T::Hash[String, Object]) }
@@ -53,7 +67,7 @@ module Dependabot
 
             manifest
           rescue ArgumentError, JSON::ParserError
-            raise InvalidManifest
+            raise InvalidManifest, cause: nil
           end
 
           private
@@ -61,8 +75,8 @@ module Dependabot
           sig { params(header: String).returns(T.nilable(String)) }
           def authenticate_bearer(header)
             super
-          rescue DockerRegistry2::NotFound
-            raise DockerRegistry2::RegistryAuthenticationException
+          rescue DockerRegistry2::NotFound, URI::InvalidURIError
+            raise DockerRegistry2::RegistryAuthenticationException, cause: nil
           end
         end
       end
