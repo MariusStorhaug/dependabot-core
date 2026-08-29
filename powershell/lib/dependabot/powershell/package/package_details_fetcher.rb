@@ -96,7 +96,7 @@ module Dependabot
           )
         end
 
-        sig { params(version: String).returns(T.nilable(String)) }
+        sig { params(version: String).returns(String) }
         def manifest_guid_for(version)
           return mar_manifest_guid_for(version) if @registry_source == :mar
 
@@ -117,18 +117,16 @@ module Dependabot
 
         private
 
-        sig { params(version: String).returns(T.nilable(String)) }
+        sig { params(version: String).returns(String) }
         def psgallery_manifest_guid_for(version)
-          response = Dependabot::RegistryClient.get(url: module_manifest_url(version))
-          return unless response.status == 200
+          response = fetch_psgallery_page(module_manifest_url(version))
 
           manifest = Nokogiri::HTML(response.body).text.tr("\u00a0", " ")
-          MANIFEST_GUID_PATTERN.match(manifest)&.[](:guid)
-        rescue StandardError => e
-          Dependabot.logger.error(
-            "Error while fetching PowerShell Gallery manifest for #{dependency.name} #{version}: #{e.message}"
-          )
-          nil
+          guid = MANIFEST_GUID_PATTERN.match(manifest)&.[](:guid)
+          return guid if guid
+
+          raise Dependabot::DependencyFileNotResolvable,
+                "PowerShell Gallery manifest for #{dependency.name} #{version} did not contain a valid GUID"
         end
 
         sig { returns(T.nilable(T::Array[Dependabot::Package::PackageRelease])) }
@@ -331,32 +329,32 @@ module Dependabot
                 "PowerShell Gallery returned malformed XML for #{dependency.name}: #{e.message}"
         end
 
-        sig { params(version: String).returns(T.nilable(String)) }
+        sig { params(version: String).returns(String) }
         def mar_manifest_guid_for(version)
           manifest = docker_registry_client.manifest(mar_repository_name, version)
           layers = manifest["layers"]
-          return unless layers.is_a?(Array)
-
-          layer = layers.first
-          return unless layer.is_a?(Hash)
-
-          annotations = layer["annotations"]
-          return unless annotations.is_a?(Hash)
-
-          metadata_json = annotations["metadata"]
-          return unless metadata_json.is_a?(String)
+          layer = layers.first if layers.is_a?(Array)
+          annotations = layer["annotations"] if layer.is_a?(Hash)
+          metadata_json = annotations["metadata"] if annotations.is_a?(Hash)
+          metadata_error = "Microsoft Artifact Registry manifest for #{dependency.name} #{version} lacked metadata"
+          raise Dependabot::DependencyFileNotResolvable, metadata_error unless metadata_json.is_a?(String)
 
           metadata = JSON.parse(metadata_json)
-          return unless metadata.is_a?(Hash)
+          guid = metadata["GUID"] if metadata.is_a?(Hash)
+          return guid if guid.is_a?(String) && guid.match?(GUID_PATTERN)
 
-          guid = metadata["GUID"]
-          guid if guid.is_a?(String) && guid.match?(GUID_PATTERN)
-        rescue DockerRegistry2::Exception, JSON::ParserError => e
-          Dependabot.logger.error(
-            "Error while fetching Microsoft Artifact Registry manifest for " \
-            "#{dependency.name} #{version}: #{e.message}"
-          )
-          nil
+          raise Dependabot::DependencyFileNotResolvable,
+                "Microsoft Artifact Registry manifest for #{dependency.name} #{version} did not contain a valid GUID"
+        rescue DockerRegistry2::RegistryAuthenticationException,
+               DockerRegistry2::RegistryAuthorizationException
+          raise Dependabot::PrivateSourceAuthenticationFailure, MAR_API_BASE
+        rescue DockerRegistry2::RegistryUnknownException
+          raise Dependabot::PrivateSourceTimedOut, MAR_API_BASE
+        rescue DockerRegistry2::RegistryHTTPException => e
+          raise_mar_registry_error(e)
+        rescue JSON::ParserError
+          raise Dependabot::DependencyFileNotResolvable,
+                "Microsoft Artifact Registry manifest for #{dependency.name} #{version} contained malformed metadata"
         end
 
         sig { returns(String) }

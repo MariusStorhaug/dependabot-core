@@ -225,6 +225,11 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
       expect(updated.requirement).to eq("= 5.4.0")
     end
 
+    it "does not fetch manifest GUID metadata for an unqualified update" do
+      expect(checker.updated_requirements.first.requirement).to eq("= 5.4.0")
+      expect(a_request(:get, latest_manifest_url)).not_to have_been_made
+    end
+
     it "preserves the version_key metadata for the file updater stage" do
       updated = checker.updated_requirements.first
       expect(updated[:metadata][:version_key]).to eq("RequiredVersion")
@@ -262,10 +267,14 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
         }]
       end
 
+      let(:target_manifest_body) do
+        "@{ GUID = '22222222-2222-2222-2222-222222222222' }"
+      end
+
       before do
         stub_request(:get, latest_manifest_url).to_return(
           status: 200,
-          body: "@{ GUID = '22222222-2222-2222-2222-222222222222' }"
+          body: target_manifest_body
         )
       end
 
@@ -273,6 +282,46 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
         expect(checker.updated_requirements.first.metadata).to include(
           updated_guid: "22222222-2222-2222-2222-222222222222"
         )
+      end
+
+      context "when the selected release manifest returns an HTTP error" do
+        before do
+          stub_request(:get, latest_manifest_url).to_return(status: 500, body: "")
+        end
+
+        it "does not emit a version update with the stale GUID" do
+          expect { checker.updated_dependencies(requirements_to_unlock: :own) }
+            .to raise_error(Dependabot::RegistryError) do |error|
+              expect(error.status).to eq(500)
+            end
+        end
+      end
+
+      context "when the selected release manifest is malformed" do
+        let(:target_manifest_body) { "@{ GUID = '22222222-2222-2222-2222-222222222222 }" }
+
+        it "does not emit a version update with the stale GUID" do
+          expect { checker.updated_dependencies(requirements_to_unlock: :own) }
+            .to raise_error(Dependabot::DependencyFileNotResolvable, /Pester.*5\.4\.0.*valid GUID/i)
+        end
+      end
+
+      context "when the selected release manifest has no GUID" do
+        let(:target_manifest_body) { "@{ ModuleVersion = '5.4.0' }" }
+
+        it "does not emit a version update with the stale GUID" do
+          expect { checker.updated_dependencies(requirements_to_unlock: :own) }
+            .to raise_error(Dependabot::DependencyFileNotResolvable, /Pester.*5\.4\.0.*valid GUID/i)
+        end
+      end
+
+      context "when the selected release manifest has an invalid GUID" do
+        let(:target_manifest_body) { "@{ GUID = 'not-a-guid' }" }
+
+        it "does not emit a version update with the stale GUID" do
+          expect { checker.updated_dependencies(requirements_to_unlock: :own) }
+            .to raise_error(Dependabot::DependencyFileNotResolvable, /Pester.*5\.4\.0.*valid GUID/i)
+        end
       end
     end
 
@@ -302,6 +351,28 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
       end
     end
 
+    context "when a GUID-qualified RequiredVersion is already at the selected version" do
+      let(:dependency_version) { "5.4.0" }
+      let(:dependency_requirement) { "= 5.4.0" }
+      let(:requirements) do
+        [{
+          requirement: dependency_requirement,
+          groups: [],
+          source: source,
+          file: "module.psd1",
+          metadata: {
+            version_key: "RequiredVersion",
+            guid: "11111111-1111-1111-1111-111111111111"
+          }
+        }]
+      end
+
+      it "does not require a manifest GUID lookup" do
+        expect(checker.updated_requirements.first.requirement).to eq("= 5.4.0")
+        expect(a_request(:get, latest_manifest_url)).not_to have_been_made
+      end
+    end
+
     context "when a GUID-qualified dependency is available from Microsoft Artifact Registry" do
       let(:dependency) do
         Dependabot::Dependency.new(
@@ -321,6 +392,31 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
         )
       end
 
+      let(:mar_manifest_metadata) do
+        JSON.dump(
+          "ModuleVersion" => "5.5.2",
+          "GUID" => "17a2feff-488b-47f9-8729-e2cec094624c"
+        )
+      end
+      let(:mar_manifest_status) { 200 }
+      let(:mar_manifest_body) do
+        JSON.dump(
+          "schemaVersion" => 2,
+          "mediaType" => "application/vnd.oci.image.manifest.v1+json",
+          "config" => {
+            "mediaType" => "application/vnd.oci.image.config.v1+json",
+            "digest" => "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "size" => 0
+          },
+          "layers" => [{
+            "mediaType" => "application/vnd.oci.image.layer.v1.tar+gzip",
+            "digest" => "sha256:4465339b2c52cb19d0cb6ee16467076cd7f32633e9195df675373eb81e0e8cca",
+            "size" => 10_201_874,
+            "annotations" => { "metadata" => mar_manifest_metadata }
+          }]
+        )
+      end
+
       before do
         stub_request(:get, mar_tags_url).to_return(
           status: 200,
@@ -330,27 +426,8 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
           :get,
           "https://mcr.microsoft.com/v2/psresource/az.accounts/manifests/5.5.2"
         ).to_return(
-          status: 200,
-          body: JSON.dump(
-            "schemaVersion" => 2,
-            "mediaType" => "application/vnd.oci.image.manifest.v1+json",
-            "config" => {
-              "mediaType" => "application/vnd.oci.image.config.v1+json",
-              "digest" => "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-              "size" => 0
-            },
-            "layers" => [{
-              "mediaType" => "application/vnd.oci.image.layer.v1.tar+gzip",
-              "digest" => "sha256:4465339b2c52cb19d0cb6ee16467076cd7f32633e9195df675373eb81e0e8cca",
-              "size" => 10_201_874,
-              "annotations" => {
-                "metadata" => JSON.dump(
-                  "ModuleVersion" => "5.5.2",
-                  "GUID" => "17a2feff-488b-47f9-8729-e2cec094624c"
-                )
-              }
-            }]
-          )
+          status: mar_manifest_status,
+          body: mar_manifest_body
         )
       end
 
@@ -363,6 +440,27 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
           type: "registry",
           url: "https://mcr.microsoft.com"
         )
+      end
+
+      context "when the selected MAR manifest returns an HTTP error" do
+        let(:mar_manifest_status) { 503 }
+        let(:mar_manifest_body) { "" }
+
+        it "does not emit a version update with the stale GUID" do
+          expect { checker.updated_dependencies(requirements_to_unlock: :own) }
+            .to raise_error(Dependabot::RegistryError) do |error|
+              expect(error.status).to eq(503)
+            end
+        end
+      end
+
+      context "when the selected MAR manifest metadata is malformed" do
+        let(:mar_manifest_metadata) { "{" }
+
+        it "does not emit a version update with the stale GUID" do
+          expect { checker.updated_dependencies(requirements_to_unlock: :own) }
+            .to raise_error(Dependabot::DependencyFileNotResolvable, /Az\.Accounts.*5\.5\.2.*metadata/i)
+        end
       end
     end
 

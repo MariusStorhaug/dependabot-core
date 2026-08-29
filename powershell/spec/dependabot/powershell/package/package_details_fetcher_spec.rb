@@ -344,16 +344,35 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
           expect(fetcher.manifest_guid_for("5.4.0")).to eq("a699dea5-2c73-4616-a270-1f7abb777e71")
         end
 
-        it "returns nil when the module manifest has no GUID" do
+        it "raises when the module manifest has no GUID" do
           stub_request(:get, manifest_url).to_return(status: 200, body: "@{ ModuleVersion = '5.4.0' }")
 
-          expect(fetcher.manifest_guid_for("5.4.0")).to be_nil
+          expect { fetcher.manifest_guid_for("5.4.0") }
+            .to raise_error(Dependabot::DependencyFileNotResolvable, /Pester.*5\.4\.0.*valid GUID/i)
         end
 
-        it "returns nil when the module manifest cannot be fetched" do
+        it "raises when the module manifest cannot be fetched" do
           stub_request(:get, manifest_url).to_return(status: 404, body: "")
 
-          expect(fetcher.manifest_guid_for("5.4.0")).to be_nil
+          expect { fetcher.manifest_guid_for("5.4.0") }
+            .to raise_error(Dependabot::RegistryError) do |error|
+              expect(error.status).to eq(404)
+            end
+        end
+
+        it "raises when the module manifest is malformed" do
+          stub_request(:get, manifest_url)
+            .to_return(status: 200, body: "@{ GUID = 'a699dea5-2c73-4616-a270-1f7abb777e71 }")
+
+          expect { fetcher.manifest_guid_for("5.4.0") }
+            .to raise_error(Dependabot::DependencyFileNotResolvable, /Pester.*5\.4\.0.*valid GUID/i)
+        end
+
+        it "raises when the module manifest has an invalid GUID" do
+          stub_request(:get, manifest_url).to_return(status: 200, body: "@{ GUID = 'not-a-guid' }")
+
+          expect { fetcher.manifest_guid_for("5.4.0") }
+            .to raise_error(Dependabot::DependencyFileNotResolvable, /Pester.*5\.4\.0.*valid GUID/i)
         end
       end
     end
