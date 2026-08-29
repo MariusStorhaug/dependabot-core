@@ -121,6 +121,27 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
         expect(checker.updated_dependencies(requirements_to_unlock: :own)).to be_empty
       end
     end
+
+    context "when representable releases are equal under registry SemVer but not native comparison" do
+      let(:dependency_version) { "1.1" }
+      let(:dependency_requirement) { "= 1.1" }
+
+      it "selects the longer native version regardless of registry order" do
+        [%w(1.2 1.2.0), %w(1.2.0 1.2)].each do |versions|
+          body = feed_xml(entries: versions.map { |version| entry_xml(version: version) })
+          stub_request(:get, find_packages_by_id_url).to_return(status: 200, body: body)
+          fresh_checker = described_class.new(
+            dependency: dependency,
+            dependency_files: [],
+            credentials: [],
+            ignored_versions: ignored_versions,
+            security_advisories: security_advisories
+          )
+
+          expect(fresh_checker.latest_resolvable_version.to_s).to eq("1.2.0")
+        end
+      end
+    end
   end
 
   describe "#latest_resolvable_version_with_no_unlock" do

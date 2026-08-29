@@ -266,7 +266,8 @@ RSpec.describe Dependabot::Updater::UpdateTypeHelper do
           ["1.2.3", "2.0.0"] => "major",
           ["1.2.3", "1.3.0"] => "minor",
           ["1.2.3", "1.2.4"] => "patch",
-          ["1.2.3.4", "1.2.3.5"] => "patch"
+          ["1.2.3.4", "1.2.3.5"] => "patch",
+          ["1.2", "1.2.0"] => "patch"
         }
 
         expected_types.each do |(previous, current), expected_type|
@@ -281,6 +282,19 @@ RSpec.describe Dependabot::Updater::UpdateTypeHelper do
 
           expect(helper.update_type_for_dependency(updated_dependency)).to eq(expected_type)
         end
+      end
+
+      it "does not classify removal of a native version component as an update" do
+        updated_dependency = Dependabot::Dependency.new(
+          name: "Pester",
+          version: "1.2",
+          previous_version: "1.2.0",
+          requirements: [],
+          previous_requirements: [],
+          package_manager: package_manager
+        )
+
+        expect(helper.update_type_for_dependency(updated_dependency)).to be_nil
       end
 
       it "classifies each requirement-only declaration style from its previous bound" do
