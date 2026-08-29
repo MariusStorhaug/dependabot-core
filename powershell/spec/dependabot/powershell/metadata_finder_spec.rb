@@ -190,14 +190,32 @@ RSpec.describe Dependabot::Powershell::MetadataFinder do
       end
     end
 
+    context "when Gallery metadata identifies an Azure DevOps repository path" do
+      let(:dependency_name) { "Get-AzVMDeletionActivity" }
+      let(:dependency_version) { "0.6.0" }
+
+      before do
+        stub_gallery(
+          project_url: " https://dev.azure.com/ayn/PowerShell/_git/AzIaaS?path=%2FGet-AzVMDeletionActivity.ps1"
+        )
+      end
+
+      it "returns the canonical repository URL without the file query" do
+        expect(source_url).to eq("https://dev.azure.com/ayn/PowerShell/_git/AzIaaS")
+      end
+    end
+
     {
       "missing" => nil,
       "empty" => "",
       "malformed" => "not a URL",
       "non-HTTP" => "git@github.com:Pester/Pester.git",
       "credentialed" => "https://user:secret@github.com/Pester/Pester",
+      "explicit-default-port" => "https://github.com:443/Pester/Pester",
       "alternate-port" => "https://github.com:444/Pester/Pester",
       "unsupported-host" => "https://example.com/Pester/Pester",
+      "embedded-host" => "https://github.com/127.0.0.1:3000/Pester/Pester",
+      "unsupported-CodeCommit" => "https://git-codecommit.eu-west-1.amazonaws.com/v1/repos/Pester",
       "non-repository" => "https://www.powershellgallery.com/packages/Pester"
     }.each do |description, project_url|
       context "when Gallery project metadata is #{description}" do

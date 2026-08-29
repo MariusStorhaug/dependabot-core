@@ -12,7 +12,10 @@ module Dependabot
       extend T::Sig
 
       PUBLIC_SOURCE_HOSTS = %w(github.com gitlab.com bitbucket.org dev.azure.com).freeze
-      CODECOMMIT_HOST = /\Agit-codecommit\.[a-z0-9-]+\.amazonaws\.com\z/
+      PUBLIC_REPOSITORY_PATH = %r{\A/(?<owner>[\w.-]+)/(?<repository>[\w.-]+)/?\z}
+      AZURE_REPOSITORY_PATH = %r{
+        \A/(?<organization>[\w.-]+)/(?<project>[\w.-]+)/_git/(?<repository>[\w.-]+)/?\z
+      }x
 
       private
 
@@ -26,26 +29,38 @@ module Dependabot
 
         project_url = project_url.strip
         return if project_url.empty?
-        return unless safe_public_source_url?(project_url)
 
-        Dependabot::Source.from_url(project_url)
+        source_url = canonical_source_url(project_url)
+        Dependabot::Source.from_url(source_url) if source_url
       end
 
-      sig { params(url: String).returns(T::Boolean) }
-      def safe_public_source_url?(url)
+      sig { params(url: String).returns(T.nilable(String)) }
+      def canonical_source_url(url)
         uri = URI.parse(url)
-        return false unless uri.is_a?(URI::HTTP)
+        return unless uri.is_a?(URI::HTTP)
 
         host = uri.host&.downcase
-        port = T.cast(uri.port, Integer)
-        default_port = T.cast(uri.default_port, Integer)
+        return unless host && PUBLIC_SOURCE_HOSTS.include?(host)
+        return unless uri.userinfo.nil?
+        return unless url.match?(%r{\Ahttps?://#{Regexp.escape(host)}/}i)
 
-        !host.nil? &&
-          uri.userinfo.nil? &&
-          port == default_port &&
-          (PUBLIC_SOURCE_HOSTS.include?(host) || CODECOMMIT_HOST.match?(host))
+        path = T.cast(uri.path, String)
+        return canonical_azure_url(host, path) if host == "dev.azure.com"
+
+        match = PUBLIC_REPOSITORY_PATH.match(path)
+        return unless match
+
+        "https://#{host}/#{match[:owner]}/#{match[:repository]}"
       rescue URI::Error
-        false
+        nil
+      end
+
+      sig { params(host: String, path: String).returns(T.nilable(String)) }
+      def canonical_azure_url(host, path)
+        match = AZURE_REPOSITORY_PATH.match(path)
+        return unless match
+
+        "https://#{host}/#{match[:organization]}/#{match[:project]}/_git/#{match[:repository]}"
       end
 
       sig { returns(Dependabot::Powershell::Package::PackageDetailsFetcher) }
