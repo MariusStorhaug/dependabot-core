@@ -134,7 +134,7 @@ module Dependabot
           comparison = T.must(ModuleSpecificationVersion.compare(left_version, right_version))
           return comparison unless comparison.zero?
 
-          left_version <=> right_version
+          T.must(left_version <=> right_version)
         end
 
         sig { returns(Dependabot::Powershell::Package::PackageDetailsFetcher) }
