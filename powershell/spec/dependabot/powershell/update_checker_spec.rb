@@ -483,6 +483,31 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
             .to raise_error(Dependabot::DependencyFileNotResolvable, /Az\.Accounts.*5\.5\.2.*manifest/i)
         end
       end
+
+      context "when the selected MAR manifest contains malformed JSON" do
+        let(:mar_manifest_body) { "{" }
+
+        it "does not emit a version update with the stale GUID" do
+          expect { checker.updated_dependencies(requirements_to_unlock: :own) }
+            .to raise_error(Dependabot::DependencyFileNotResolvable, /Az\.Accounts.*5\.5\.2.*manifest/i)
+        end
+      end
+
+      context "when the selected MAR manifest has a certificate failure" do
+        before do
+          stub_request(
+            :get,
+            "https://mcr.microsoft.com/v2/psresource/az.accounts/manifests/5.5.2"
+          ).to_raise(DockerRegistry2::RegistrySSLException)
+        end
+
+        it "raises a typed certificate error instead of emitting an update" do
+          expect { checker.updated_dependencies(requirements_to_unlock: :own) }
+            .to raise_error(Dependabot::PrivateSourceCertificateFailure) do |error|
+              expect(error.source).to eq("https://mcr.microsoft.com")
+            end
+        end
+      end
     end
 
     context "when the requirement is a MaximumVersion cap that excludes the latest version" do

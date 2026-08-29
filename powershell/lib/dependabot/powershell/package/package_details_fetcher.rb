@@ -154,6 +154,8 @@ module Dependabot
           raise Dependabot::PrivateSourceAuthenticationFailure, MAR_API_BASE
         rescue DockerRegistry2::RegistryUnknownException
           raise Dependabot::PrivateSourceTimedOut, MAR_API_BASE
+        rescue DockerRegistry2::RegistrySSLException
+          raise Dependabot::PrivateSourceCertificateFailure, MAR_API_BASE
         rescue DockerRegistry2::RegistryHTTPException => e
           raise_mar_registry_error(e)
         rescue JSON::ParserError, InvalidMarResponse => e
@@ -345,6 +347,8 @@ module Dependabot
           raise Dependabot::PrivateSourceAuthenticationFailure, MAR_API_BASE
         rescue DockerRegistry2::RegistryUnknownException
           raise Dependabot::PrivateSourceTimedOut, MAR_API_BASE
+        rescue DockerRegistry2::RegistrySSLException
+          raise Dependabot::PrivateSourceCertificateFailure, MAR_API_BASE
         rescue DockerRegistry2::NotFound
           raise Dependabot::RegistryError.new(
             404,

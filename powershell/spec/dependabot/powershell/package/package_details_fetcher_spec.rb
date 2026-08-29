@@ -291,6 +291,19 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
       end
     end
 
+    context "when Microsoft Artifact Registry has a certificate failure" do
+      before do
+        stub_request(:get, mar_tags_url).to_raise(DockerRegistry2::RegistrySSLException)
+      end
+
+      it "raises a typed certificate error without downgrading to the PowerShell Gallery" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::PrivateSourceCertificateFailure) do |error|
+          expect(error.source).to eq("https://mcr.microsoft.com")
+        end
+        expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
+      end
+    end
+
     context "when Microsoft Artifact Registry returns malformed JSON data" do
       before do
         stub_request(:get, mar_tags_url).to_return(status: 200, body: "null")
