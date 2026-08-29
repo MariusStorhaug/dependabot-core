@@ -29,6 +29,9 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
     "https://www.powershellgallery.com/packages/Pester/5.4.0/Content/Pester.psd1"
   end
   let(:mar_tags_url) { "https://mcr.microsoft.com/v2/psresource/#{dependency.name.downcase}/tags/list" }
+  let(:mar_manifest_url) do
+    "https://mcr.microsoft.com/v2/psresource/#{dependency.name.downcase}/manifests/5.4.0"
+  end
 
   before do
     stub_request(:get, mar_tags_url).to_return(status: 404, body: "")
@@ -443,6 +446,63 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
       end
     end
 
+    {
+      "uses HTTP" => [
+        "http://mcr.microsoft.com/oauth2/token?access_token=MAR_REALM_SECRET",
+        %r{\Ahttp://mcr\.microsoft\.com}
+      ],
+      "uses a loopback address" => [
+        "https://127.0.0.1/oauth2/token?access_token=MAR_REALM_SECRET",
+        %r{\Ahttps://127\.0\.0\.1}
+      ],
+      "uses a private address" => [
+        "https://10.0.0.1/oauth2/token?access_token=MAR_REALM_SECRET",
+        %r{\Ahttps://10\.0\.0\.1}
+      ],
+      "uses an external host" => [
+        "https://registry.example/oauth2/token?access_token=MAR_REALM_SECRET",
+        %r{\Ahttps://registry\.example}
+      ],
+      "uses an MCR subdomain" => [
+        "https://token.mcr.microsoft.com/oauth2/token?access_token=MAR_REALM_SECRET",
+        %r{\Ahttps://token\.mcr\.microsoft\.com}
+      ],
+      "contains credentials" => [
+        "https://user:MAR_REALM_SECRET@mcr.microsoft.com/oauth2/token",
+        %r{\Ahttps://user:MAR_REALM_SECRET@mcr\.microsoft\.com}
+      ],
+      "uses an alternate port" => [
+        "https://mcr.microsoft.com:8443/oauth2/token?access_token=MAR_REALM_SECRET",
+        %r{\Ahttps://mcr\.microsoft\.com:8443}
+      ],
+      "uses the wrong path" => [
+        "https://mcr.microsoft.com/oauth2/MAR_REALM_SECRET",
+        %r{\Ahttps://mcr\.microsoft\.com/oauth2/MAR_REALM_SECRET}
+      ]
+    }.each do |description, (realm, outbound_request)|
+      context "when the Microsoft Artifact Registry bearer realm #{description}" do
+        before do
+          stub_request(:get, mar_tags_url).to_return(
+            status: 401,
+            headers: {
+              "Www-Authenticate" =>
+                ["Bearer", "realm=\"#{realm}\",service=\"mcr.microsoft.com\""].join(" ")
+            }
+          )
+        end
+
+        it "fails closed without requesting the realm or exposing it" do
+          expect { fetcher.fetch }.to raise_error(Dependabot::PrivateSourceAuthenticationFailure) do |error|
+            expect(error.source).to eq("https://mcr.microsoft.com")
+            expect(error.full_message).not_to include("MAR_REALM_SECRET", "access_token")
+            expect(error.cause).to be_nil
+          end
+          expect(a_request(:get, outbound_request)).not_to have_been_made
+          expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
+        end
+      end
+    end
+
     context "when the Microsoft Artifact Registry bearer realm is malformed" do
       let(:secret) { "MAR_REALM_SECRET" }
 
@@ -490,6 +550,97 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
       end
     end
 
+    context "when the Microsoft Artifact Registry bearer realm has invalid UTF-8" do
+      let(:secret) { "MAR_REALM_ENCODING_SECRET" }
+
+      before do
+        realm = "https://mcr.microsoft.com/oauth2/token?access_token=#{secret}\xFF".b.force_encoding(Encoding::UTF_8)
+        stub_request(:get, mar_tags_url).to_return(
+          status: 401,
+          headers: {
+            "Www-Authenticate" =>
+              ["Bearer", "realm=\"#{realm}\",service=\"mcr.microsoft.com\""].join(" ")
+          }
+        )
+      end
+
+      it "raises a sanitized authentication error without requesting the realm" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::PrivateSourceAuthenticationFailure) do |error|
+          expect(error.source).to eq("https://mcr.microsoft.com")
+          expect(error.full_message).not_to include(secret, "access_token")
+          expect(error.cause).to be_nil
+        end
+        expect(a_request(:get, /MAR_REALM_ENCODING_SECRET/)).not_to have_been_made
+        expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
+      end
+    end
+
+    {
+      "an external host" => [
+        "https://redirect.example/tags?access_token=MAR_REDIRECT_SECRET",
+        %r{\Ahttps://redirect\.example}
+      ],
+      "a loopback address" => [
+        "https://127.0.0.1/tags?access_token=MAR_REDIRECT_SECRET",
+        %r{\Ahttps://127\.0\.0\.1}
+      ],
+      "a private address" => [
+        "https://10.0.0.1/tags?access_token=MAR_REDIRECT_SECRET",
+        %r{\Ahttps://10\.0\.0\.1}
+      ],
+      "a credentialed URL" => [
+        "https://user:MAR_REDIRECT_SECRET@redirect.example/tags",
+        %r{\Ahttps://user:MAR_REDIRECT_SECRET@redirect\.example}
+      ]
+    }.each do |description, (location, outbound_request)|
+      context "when the Microsoft Artifact Registry tags endpoint redirects to #{description}" do
+        before do
+          stub_request(:get, mar_tags_url).to_return(status: 302, headers: { "Location" => location })
+        end
+
+        it "raises a sanitized registry error without following or falling back" do
+          expect { fetcher.fetch }.to raise_error(Dependabot::RegistryError) do |error|
+            expect(error.status).to eq(302)
+            expect(error.message).to include("Microsoft Artifact Registry", "Pester")
+            expect(error.full_message).not_to include("MAR_REDIRECT_SECRET", "access_token")
+            expect(error.cause).to be_nil
+          end
+          expect(a_request(:get, outbound_request)).not_to have_been_made
+          expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
+        end
+      end
+    end
+
+    context "when the Microsoft Artifact Registry token endpoint redirects externally" do
+      let(:token_url) { "https://mcr.microsoft.com/oauth2/token" }
+      let(:redirect_url) { "https://redirect.example/token?access_token=MAR_TOKEN_REDIRECT_SECRET" }
+
+      before do
+        stub_request(:get, mar_tags_url).to_return(
+          status: 401,
+          headers: {
+            "Www-Authenticate" =>
+              'Bearer realm="https://mcr.microsoft.com/oauth2/token",service="mcr.microsoft.com"'
+          }
+        )
+        stub_request(:get, /\A#{Regexp.escape(token_url)}/).to_return(
+          status: 302,
+          headers: { "Location" => redirect_url }
+        )
+      end
+
+      it "raises a sanitized registry error without following or falling back" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::RegistryError) do |error|
+          expect(error.status).to eq(302)
+          expect(error.message).to include("Microsoft Artifact Registry", "Pester")
+          expect(error.full_message).not_to include("MAR_TOKEN_REDIRECT_SECRET", "access_token")
+          expect(error.cause).to be_nil
+        end
+        expect(a_request(:get, %r{\Ahttps://redirect\.example})).not_to have_been_made
+        expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
+      end
+    end
+
     context "when Microsoft Artifact Registry times out" do
       before do
         stub_request(:get, mar_tags_url).to_raise(DockerRegistry2::RegistryUnknownException)
@@ -512,6 +663,36 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
         expect { fetcher.fetch }.to raise_error(Dependabot::PrivateSourceCertificateFailure) do |error|
           expect(error.source).to eq("https://mcr.microsoft.com")
         end
+        expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
+      end
+    end
+
+    context "when the selected Microsoft Artifact Registry manifest redirects externally" do
+      let(:redirect_url) do
+        "https://redirect.example/manifest?access_token=MAR_MANIFEST_REDIRECT_SECRET"
+      end
+
+      before do
+        stub_request(:get, mar_tags_url).to_return(
+          status: 200,
+          body: JSON.dump("name" => "psresource/pester", "tags" => ["5.4.0"])
+        )
+        stub_request(:get, mar_manifest_url).to_return(
+          status: 302,
+          headers: { "Location" => redirect_url }
+        )
+      end
+
+      it "raises a sanitized registry error without following or falling back" do
+        fetcher.fetch
+
+        expect { fetcher.manifest_guid_for("5.4.0") }.to raise_error(Dependabot::RegistryError) do |error|
+          expect(error.status).to eq(302)
+          expect(error.message).to include("Microsoft Artifact Registry", "Pester")
+          expect(error.full_message).not_to include("MAR_MANIFEST_REDIRECT_SECRET", "access_token")
+          expect(error.cause).to be_nil
+        end
+        expect(a_request(:get, %r{\Ahttps://redirect\.example})).not_to have_been_made
         expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
       end
     end
