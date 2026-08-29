@@ -48,7 +48,10 @@ module Dependabot
 
           sig { params(repository: String, tag: String).returns(T::Hash[String, Object]) }
           def manifest(repository, tag)
-            super
+            manifest = super
+            raise InvalidManifest unless JSON.parse(manifest.body).is_a?(Hash)
+
+            manifest
           rescue ArgumentError, JSON::ParserError
             raise InvalidManifest
           end

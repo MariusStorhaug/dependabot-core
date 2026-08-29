@@ -493,6 +493,24 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
         end
       end
 
+      context "when the selected MAR manifest is not a JSON object" do
+        let(:mar_manifest_body) do
+          JSON.dump(
+            [
+              ["schemaVersion", 2],
+              ["layers", [{
+                "annotations" => { "metadata" => mar_manifest_metadata }
+              }]]
+            ]
+          )
+        end
+
+        it "does not accept an array coerced into a manifest" do
+          expect { checker.updated_dependencies(requirements_to_unlock: :own) }
+            .to raise_error(Dependabot::DependencyFileNotResolvable, /Az\.Accounts.*5\.5\.2.*manifest/i)
+        end
+      end
+
       context "when the selected MAR manifest has a certificate failure" do
         before do
           stub_request(
