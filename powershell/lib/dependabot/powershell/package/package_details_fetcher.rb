@@ -334,14 +334,7 @@ module Dependabot
         sig { params(version: String).returns(String) }
         def mar_manifest_guid_for(version)
           manifest = docker_registry_client.manifest(mar_repository_name, version)
-          layers = manifest["layers"]
-          layer = layers.first if layers.is_a?(Array)
-          annotations = layer["annotations"] if layer.is_a?(Hash)
-          metadata_json = annotations["metadata"] if annotations.is_a?(Hash)
-          metadata_error = "Microsoft Artifact Registry manifest for #{dependency.name} #{version} lacked metadata"
-          raise Dependabot::DependencyFileNotResolvable, metadata_error unless metadata_json.is_a?(String)
-
-          metadata = JSON.parse(metadata_json)
+          metadata = MarRegistry.manifest_metadata(manifest)
           guid = metadata["GUID"] if metadata.is_a?(Hash)
           return guid if guid.is_a?(String) && guid.match?(GUID_PATTERN)
 
@@ -359,7 +352,10 @@ module Dependabot
           )
         rescue DockerRegistry2::RegistryHTTPException => e
           raise_mar_registry_error(e)
-        rescue JSON::ParserError
+        rescue MarRegistry::InvalidManifest
+          raise Dependabot::DependencyFileNotResolvable,
+                "Microsoft Artifact Registry response for #{dependency.name} #{version} contained a malformed manifest"
+        rescue MarRegistry::InvalidMetadata
           raise Dependabot::DependencyFileNotResolvable,
                 "Microsoft Artifact Registry manifest for #{dependency.name} #{version} contained malformed metadata"
         end

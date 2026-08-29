@@ -474,6 +474,15 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
             .to raise_error(Dependabot::DependencyFileNotResolvable, /Az\.Accounts.*5\.5\.2.*metadata/i)
         end
       end
+
+      context "when the selected MAR manifest has an invalid document shape" do
+        let(:mar_manifest_body) { "null" }
+
+        it "does not emit a version update with the stale GUID" do
+          expect { checker.updated_dependencies(requirements_to_unlock: :own) }
+            .to raise_error(Dependabot::DependencyFileNotResolvable, /Az\.Accounts.*5\.5\.2.*manifest/i)
+        end
+      end
     end
 
     context "when the requirement is a MaximumVersion cap that excludes the latest version" do

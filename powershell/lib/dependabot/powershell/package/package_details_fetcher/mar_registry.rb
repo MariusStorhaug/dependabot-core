@@ -12,6 +12,9 @@ module Dependabot
         class MarRegistry < DockerRegistry2::Registry
           extend T::Sig
 
+          class InvalidManifest < DockerRegistry2::Exception; end
+          class InvalidMetadata < DockerRegistry2::Exception; end
+
           sig { params(error: DockerRegistry2::RegistryHTTPException).returns(Integer) }
           def self.http_status(error)
             if error.respond_to?(:status)
@@ -23,6 +26,31 @@ module Dependabot
             return status.to_i if status
 
             raise error
+          end
+
+          sig do
+            params(manifest: T::Hash[String, T.anything]).returns(T::Hash[String, T.anything])
+          end
+          def self.manifest_metadata(manifest)
+            layers = manifest["layers"]
+            layer = layers.first if layers.is_a?(Array)
+            annotations = layer["annotations"] if layer.is_a?(Hash)
+            metadata_json = annotations["metadata"] if annotations.is_a?(Hash)
+            raise InvalidMetadata unless metadata_json.is_a?(String)
+
+            metadata = JSON.parse(metadata_json)
+            raise InvalidMetadata unless metadata.is_a?(Hash)
+
+            metadata
+          rescue JSON::ParserError
+            raise InvalidMetadata
+          end
+
+          sig { params(repository: String, tag: String).returns(T::Hash[String, T.anything]) }
+          def manifest(repository, tag)
+            super
+          rescue ArgumentError
+            raise InvalidManifest
           end
 
           private
