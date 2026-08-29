@@ -5,6 +5,7 @@ require "sorbet-runtime"
 
 require "dependabot/errors"
 require "dependabot/package/package_latest_version_finder"
+require "dependabot/powershell/module_specification_version"
 require "dependabot/powershell/package/package_details_fetcher"
 require "dependabot/powershell/requirement"
 require "dependabot/powershell/update_checker"
@@ -89,6 +90,10 @@ module Dependabot
                   .returns(T::Array[Dependabot::Package::PackageRelease])
         end
         def apply_post_fetch_lowest_security_fix_versions_filter(releases)
+          releases = releases.select do |release|
+            ModuleSpecificationVersion.parse(release.version.to_s)
+          end
+
           floor = module_version_floor
           return releases unless floor
 

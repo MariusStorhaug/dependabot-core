@@ -23,10 +23,12 @@ module Dependabot
       sig { override.returns(T.nilable(T.any(String, Gem::Version))) }
       def latest_resolvable_version
         # The PowerShell Gallery has no dependency-resolution step of its
-        # own (module manifests don't pin transitive dependency versions in
-        # a way that requires a native resolver), so the latest version is
-        # always resolvable.
-        latest_version
+        # own. A release is resolvable for this updater only when it can also
+        # be represented in the native module specification being rewritten.
+        candidate = latest_version
+        return unless candidate && ModuleSpecificationVersion.parse(candidate.to_s)
+
+        candidate
       end
 
       sig { override.returns(T.nilable(T.any(String, Gem::Version))) }
@@ -52,7 +54,16 @@ module Dependabot
       def latest_resolvable_previous_version(_updated_version)
         return dependency.version if dependency.version
 
-        dependency.requirements.filter_map { |requirement| previous_requirement_version(requirement) }.first
+        updated = updated_requirements
+        previous_versions = dependency.requirements.each_with_index.filter_map do |requirement, index|
+          updated_requirement = updated[index]
+          next unless updated_requirement
+          next if requirement.requirement == updated_requirement.requirement
+
+          previous_requirement_version(requirement)
+        end.uniq
+
+        previous_versions.one? ? previous_versions.first : nil
       end
 
       sig { override.returns(T::Array[Dependabot::DependencyRequirement]) }

@@ -341,6 +341,92 @@ RSpec.describe Dependabot::Updater::UpdateTypeHelper do
 
         expect(helper.update_type_for_dependency(updated_dependency)).to be_nil
       end
+
+      it "leaves an ambiguous requirement-only update unclassified" do
+        updated_dependency = Dependabot::Dependency.new(
+          name: "Pester",
+          version: "1.5.0",
+          previous_version: nil,
+          requirements: [
+            {
+              requirement: ">= 1.5.0",
+              groups: [],
+              file: "module.psd1",
+              source: nil,
+              metadata: { version_key: "ModuleVersion" }
+            },
+            {
+              requirement: "<= 1.5.0",
+              groups: [],
+              file: "module.psd1",
+              source: nil,
+              metadata: { version_key: "MaximumVersion" }
+            }
+          ],
+          previous_requirements: [
+            {
+              requirement: ">= 1.0.0",
+              groups: [],
+              file: "module.psd1",
+              source: nil,
+              metadata: { version_key: "ModuleVersion" }
+            },
+            {
+              requirement: "<= 1.2.0",
+              groups: [],
+              file: "module.psd1",
+              source: nil,
+              metadata: { version_key: "MaximumVersion" }
+            }
+          ],
+          package_manager: package_manager
+        )
+
+        expect(helper.update_type_for_dependency(updated_dependency)).to be_nil
+      end
+
+      it "classifies a mixed requirement-only update from its changed bound" do
+        updated_dependency = Dependabot::Dependency.new(
+          name: "Pester",
+          version: "1.5.0",
+          previous_version: "1.0.0",
+          requirements: [
+            {
+              requirement: "<= 2.0.0",
+              groups: [],
+              file: "module.psd1",
+              source: nil,
+              metadata: { version_key: "MaximumVersion" }
+            },
+            {
+              requirement: ">= 1.5.0",
+              groups: [],
+              file: "module.psd1",
+              source: nil,
+              metadata: { version_key: "ModuleVersion" }
+            }
+          ],
+          previous_requirements: [
+            {
+              requirement: "<= 2.0.0",
+              groups: [],
+              file: "module.psd1",
+              source: nil,
+              metadata: { version_key: "MaximumVersion" }
+            },
+            {
+              requirement: ">= 1.0.0",
+              groups: [],
+              file: "module.psd1",
+              source: nil,
+              metadata: { version_key: "ModuleVersion" }
+            }
+          ],
+          package_manager: package_manager
+        )
+
+        expect(helper.update_type_for_dependency(updated_dependency)).to eq("minor")
+      end
     end
   end
 end
