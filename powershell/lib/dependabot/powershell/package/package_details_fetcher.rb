@@ -36,6 +36,7 @@ module Dependabot
         require_relative "package_details_fetcher/mar_registry"
 
         class InvalidMarResponse < StandardError; end
+        class InvalidMarPagination < InvalidMarResponse; end
 
         PSGALLERY_API_BASE = "https://www.powershellgallery.com/api/v2"
         MAR_API_BASE = "https://mcr.microsoft.com"
@@ -158,9 +159,12 @@ module Dependabot
           raise Dependabot::PrivateSourceCertificateFailure, MAR_API_BASE
         rescue DockerRegistry2::RegistryHTTPException => e
           raise_mar_registry_error(e)
-        rescue JSON::ParserError, InvalidMarResponse => e
+        rescue InvalidMarPagination
           raise Dependabot::DependencyFileNotResolvable,
-                "Microsoft Artifact Registry response for #{dependency.name} was malformed or incomplete: #{e.message}"
+                "Microsoft Artifact Registry response for #{dependency.name} contained invalid pagination data"
+        rescue JSON::ParserError, InvalidMarResponse
+          raise Dependabot::DependencyFileNotResolvable,
+                "Microsoft Artifact Registry response for #{dependency.name} was malformed or incomplete"
         end
 
         sig { returns(T.nilable(T::Array[String])) }
@@ -193,17 +197,15 @@ module Dependabot
           ).returns(String)
         end
         def prepare_mar_page_url(next_url, visited_urls, pages)
-          raise InvalidMarResponse, "Tags feed for #{dependency.name} exceeded #{MAX_PAGES} pages" if pages >= MAX_PAGES
+          raise InvalidMarPagination if pages >= MAX_PAGES
 
           current_url = URI.join("#{MAR_API_BASE}/", next_url).to_s
-          if visited_urls[current_url]
-            raise InvalidMarResponse, "Tags feed for #{dependency.name} repeated a pagination URL"
-          end
+          raise InvalidMarPagination if visited_urls[current_url]
 
           visited_urls[current_url] = true
           current_url
-        rescue URI::InvalidURIError => e
-          raise InvalidMarResponse, "Invalid pagination URL for #{dependency.name}: #{e.message}"
+        rescue URI::InvalidURIError
+          raise InvalidMarPagination
         end
 
         sig do
@@ -243,14 +245,14 @@ module Dependabot
         def mar_next_page_url(response)
           link = response.headers[:link]
           return unless link
-          raise InvalidMarResponse, "Invalid pagination header for #{dependency.name}" unless link.is_a?(String)
+          raise InvalidMarPagination unless link.is_a?(String)
 
           match = link.match(/<(?<url>[^>]+)>\s*;\s*rel="?next"?/i)
-          raise InvalidMarResponse, "Invalid pagination header for #{dependency.name}" unless match
+          raise InvalidMarPagination unless match
 
           URI.join(response.request_url, T.must(match[:url])).to_s
-        rescue URI::InvalidURIError => e
-          raise InvalidMarResponse, "Invalid pagination URL for #{dependency.name}: #{e.message}"
+        rescue URI::InvalidURIError
+          raise InvalidMarPagination
         end
 
         sig { returns(T::Array[Dependabot::Package::PackageRelease]) }
@@ -301,9 +303,9 @@ module Dependabot
 
           visited_urls[current_url] = true
           current_url
-        rescue URI::InvalidURIError => e
+        rescue URI::InvalidURIError
           raise Dependabot::DependencyFileNotResolvable,
-                "PowerShell Gallery response for #{dependency.name} contained an invalid pagination URL: #{e.message}"
+                "PowerShell Gallery response for #{dependency.name} contained an invalid pagination URL"
         end
 
         sig { params(url: String).returns(Excon::Response) }
@@ -315,6 +317,8 @@ module Dependabot
           raise Dependabot::RegistryError.new(response.status, message)
         rescue Excon::Error::Timeout
           raise Dependabot::PrivateSourceTimedOut, PSGALLERY_API_BASE
+        rescue Excon::Error::Certificate
+          raise Dependabot::PrivateSourceCertificateFailure, PSGALLERY_API_BASE
         rescue Excon::Error::Socket
           message = "PowerShell Gallery returned a broken response while fetching #{dependency.name}"
           raise Dependabot::PrivateSourceBadResponse.new(PSGALLERY_API_BASE, message)
@@ -328,9 +332,9 @@ module Dependabot
           raise Dependabot::DependencyFileNotResolvable, malformed_error unless document.root&.name == "feed"
 
           document
-        rescue Nokogiri::XML::SyntaxError => e
+        rescue Nokogiri::XML::SyntaxError
           raise Dependabot::DependencyFileNotResolvable,
-                "PowerShell Gallery returned malformed XML for #{dependency.name}: #{e.message}"
+                "PowerShell Gallery returned malformed XML for #{dependency.name}"
         end
 
         sig { params(version: String).returns(String) }

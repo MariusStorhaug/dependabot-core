@@ -190,6 +190,28 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
         end
       end
 
+      context "when the tags response has a secret-bearing invalid pagination URL" do
+        let(:secret) { "MAR_URL_SECRET" }
+
+        before do
+          stub_request(:get, mar_tags_url).to_return(
+            status: 200,
+            body: JSON.dump("name" => "psresource/az.accounts", "tags" => ["4.0.0"]),
+            headers: {
+              "Link" => "<https://mcr.microsoft.com/%ZZ?access_token=#{secret}>; rel=\"next\""
+            }
+          )
+        end
+
+        it "raises a sanitized resolvability error without falling back" do
+          expect { fetcher.fetch }.to raise_error(Dependabot::DependencyFileNotResolvable) do |error|
+            expect(error.message).to include("Microsoft Artifact Registry", "Az.Accounts", "pagination")
+            expect(error.message).not_to include(secret, "access_token")
+          end
+          expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
+        end
+      end
+
       context "when the tags response repeats a pagination link" do
         before do
           repeated_url = "#{mar_tags_url}?last=4.0.0"
@@ -305,6 +327,25 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
     end
 
     context "when Microsoft Artifact Registry returns malformed JSON data" do
+      let(:secret) { "MAR_JSON_SECRET" }
+
+      before do
+        stub_request(:get, mar_tags_url).to_return(
+          status: 200,
+          body: %({"access_token":#{secret}})
+        )
+      end
+
+      it "raises a sanitized resolvability error without falling back to the PowerShell Gallery" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::DependencyFileNotResolvable) do |error|
+          expect(error.message).to include("Microsoft Artifact Registry", "Pester")
+          expect(error.message).not_to include(secret, "access_token")
+        end
+        expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
+      end
+    end
+
+    context "when Microsoft Artifact Registry returns an invalid document shape" do
       before do
         stub_request(:get, mar_tags_url).to_return(status: 200, body: "null")
       end
@@ -490,16 +531,18 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
     end
 
     context "when the feed contains malformed XML" do
+      let(:secret) { "GALLERY_XML_SECRET" }
+
       before do
         stub_request(:get, find_packages_by_id_url)
-          .to_return(status: 200, body: "<feed><entry></feed>")
+          .to_return(status: 200, body: "<feed><#{secret}></feed>")
       end
 
-      it "raises a resolvability error" do
-        expect { fetcher.fetch }.to raise_error(
-          Dependabot::DependencyFileNotResolvable,
-          /PowerShell Gallery.*XML.*Pester/i
-        )
+      it "raises a sanitized resolvability error" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::DependencyFileNotResolvable) do |error|
+          expect(error.message).to include("PowerShell Gallery", "XML", "Pester")
+          expect(error.message).not_to include(secret)
+        end
       end
     end
 
@@ -518,6 +561,25 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
           Dependabot::DependencyFileNotResolvable,
           /PowerShell Gallery.*Pester.*pagination/i
         )
+      end
+    end
+
+    context "when a next-page link contains a secret-bearing invalid URL" do
+      let(:secret) { "GALLERY_URL_SECRET" }
+
+      before do
+        body = feed_xml(
+          entries: [entry_xml(version: "5.4.0")],
+          next_link: "https://www.powershellgallery.com/%ZZ?access_token=#{secret}"
+        )
+        stub_request(:get, find_packages_by_id_url).to_return(status: 200, body: body)
+      end
+
+      it "raises a sanitized resolvability error" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::DependencyFileNotResolvable) do |error|
+          expect(error.message).to include("PowerShell Gallery", "Pester", "pagination")
+          expect(error.message).not_to include(secret, "access_token")
+        end
       end
     end
 
@@ -582,6 +644,19 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
 
       it "raises a typed timeout error" do
         expect { fetcher.fetch }.to raise_error(Dependabot::PrivateSourceTimedOut) do |error|
+          expect(error.source).to eq("https://www.powershellgallery.com/api/v2")
+        end
+      end
+    end
+
+    context "when the registry certificate cannot be verified" do
+      before do
+        stub_request(:get, find_packages_by_id_url)
+          .to_raise(Excon::Error::Certificate.new(StandardError.new("certificate failure")))
+      end
+
+      it "raises a typed certificate error" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::PrivateSourceCertificateFailure) do |error|
           expect(error.source).to eq("https://www.powershellgallery.com/api/v2")
         end
       end
