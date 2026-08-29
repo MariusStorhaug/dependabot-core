@@ -390,5 +390,83 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
         expect(checker.up_to_date?).to be(false)
       end
     end
+
+    describe "requirement-only update versions" do
+      context "when a ModuleVersion minimum is updated" do
+        let(:available_versions) { ["1.3.0"] }
+        let(:dependency_version) { nil }
+        let(:dependency_requirement) { ">= 1.2.3" }
+        let(:requirements) do
+          [{
+            requirement: dependency_requirement,
+            groups: [],
+            source: source,
+            file: "module.psd1",
+            metadata: { version_key: "ModuleVersion" }
+          }]
+        end
+
+        it "uses the prior minimum as the previous version" do
+          updated_dependency = checker.updated_dependencies(requirements_to_unlock: :own).first
+
+          expect(updated_dependency).to have_attributes(version: "1.3.0", previous_version: "1.2.3")
+        end
+      end
+
+      context "when a MaximumVersion cap is updated" do
+        let(:available_versions) { ["1.2.4"] }
+        let(:dependency_version) { nil }
+        let(:dependency_requirement) { "<= 1.2.3" }
+        let(:requirements) do
+          [{
+            requirement: dependency_requirement,
+            groups: [],
+            source: source,
+            file: "module.psd1",
+            metadata: { version_key: "MaximumVersion" }
+          }]
+        end
+
+        it "uses the prior maximum as the previous version" do
+          updated_dependency = checker.updated_dependencies(requirements_to_unlock: :own).first
+
+          expect(updated_dependency).to have_attributes(version: "1.2.4", previous_version: "1.2.3")
+        end
+      end
+
+      context "when a bounded range maximum is updated" do
+        let(:available_versions) { ["2.0.0"] }
+        let(:dependency_version) { nil }
+        let(:dependency_requirement) { ">= 1.0.0, <= 1.2.3" }
+        let(:requirements) do
+          [{
+            requirement: dependency_requirement,
+            groups: [],
+            source: source,
+            file: "module.psd1",
+            metadata: { version_key: "ModuleVersion+MaximumVersion" }
+          }]
+        end
+
+        it "uses the prior maximum as the previous version" do
+          updated_dependency = checker.updated_dependencies(requirements_to_unlock: :own).first
+
+          expect(updated_dependency).to have_attributes(version: "2.0.0", previous_version: "1.2.3")
+        end
+      end
+
+      context "when the declaration has no version" do
+        let(:available_versions) { ["1.2.3"] }
+        let(:dependency_version) { nil }
+        let(:dependency_requirement) { nil }
+        let(:requirements) do
+          [{ requirement: nil, groups: [], source: source, file: "module.psd1", metadata: {} }]
+        end
+
+        it "does not invent a previous version" do
+          expect(checker.latest_resolvable_previous_version("1.2.3")).to be_nil
+        end
+      end
+    end
   end
 end

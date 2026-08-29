@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "spec_helper"
+require "dependabot/powershell/version"
 require "dependabot/updater/update_type_helper"
 require "support/dummy_package_manager/version"
 
@@ -198,9 +199,10 @@ RSpec.describe Dependabot::Updater::UpdateTypeHelper do
         previous_version: previous_version,
         requirements: [],
         previous_requirements: [],
-        package_manager: "dummy"
+        package_manager: package_manager
       )
     end
+    let(:package_manager) { "dummy" }
 
     context "when it is a major update" do
       let(:previous_version) { "1.0.0" }
@@ -253,6 +255,91 @@ RSpec.describe Dependabot::Updater::UpdateTypeHelper do
 
       it "returns nil" do
         expect(helper.update_type_for_dependency(dependency)).to be_nil
+      end
+    end
+
+    context "with PowerShell versions" do
+      let(:package_manager) { "powershell" }
+
+      it "classifies major, minor, patch, and revision-only updates" do
+        expected_types = {
+          ["1.2.3", "2.0.0"] => "major",
+          ["1.2.3", "1.3.0"] => "minor",
+          ["1.2.3", "1.2.4"] => "patch",
+          ["1.2.3.4", "1.2.3.5"] => "patch"
+        }
+
+        expected_types.each do |(previous, current), expected_type|
+          updated_dependency = Dependabot::Dependency.new(
+            name: "Pester",
+            version: current,
+            previous_version: previous,
+            requirements: [],
+            previous_requirements: [],
+            package_manager: package_manager
+          )
+
+          expect(helper.update_type_for_dependency(updated_dependency)).to eq(expected_type)
+        end
+      end
+
+      it "classifies each requirement-only declaration style from its previous bound" do
+        expected_types = {
+          "ModuleVersion" => ["1.2.3", "1.3.0", "minor"],
+          "MaximumVersion" => ["1.2.3", "1.2.4", "patch"],
+          "ModuleVersion+MaximumVersion" => ["1.2.3", "2.0.0", "major"]
+        }
+
+        expected_types.each do |version_key, (previous, current, expected_type)|
+          updated_dependency = Dependabot::Dependency.new(
+            name: "Pester",
+            version: current,
+            previous_version: previous,
+            requirements: [{
+              requirement: "= #{current}",
+              groups: [],
+              file: "module.psd1",
+              source: nil,
+              metadata: { version_key: version_key }
+            }],
+            previous_requirements: [{
+              requirement: "= #{previous}",
+              groups: [],
+              file: "module.psd1",
+              source: nil,
+              metadata: { version_key: version_key }
+            }],
+            package_manager: package_manager
+          )
+
+          expect(helper.update_type_for_dependency(updated_dependency)).to eq(expected_type)
+        end
+      end
+
+      it "leaves same-core prerelease-only changes unclassified" do
+        updated_dependency = Dependabot::Dependency.new(
+          name: "Pester",
+          version: "1.2.3-beta2",
+          previous_version: "1.2.3-beta1",
+          requirements: [],
+          previous_requirements: [],
+          package_manager: package_manager
+        )
+
+        expect(helper.update_type_for_dependency(updated_dependency)).to be_nil
+      end
+
+      it "leaves an unversioned declaration unclassified" do
+        updated_dependency = Dependabot::Dependency.new(
+          name: "Pester",
+          version: "1.2.3",
+          previous_version: nil,
+          requirements: [],
+          previous_requirements: [],
+          package_manager: package_manager
+        )
+
+        expect(helper.update_type_for_dependency(updated_dependency)).to be_nil
       end
     end
   end

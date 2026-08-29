@@ -15,6 +15,9 @@ module Dependabot
     class Version < Dependabot::Version
       extend T::Sig
 
+      NumericComponents = T.type_alias { [Integer, Integer, Integer, Integer] }
+      VERSION_CORE_PATTERN = /\A([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?(?:\.([0-9]+))?/
+
       sig { override.params(version: VersionParameter).void }
       def initialize(version)
         @version_string = T.let(version.to_s, String)
@@ -51,10 +54,48 @@ module Dependabot
         to_s.hash
       end
 
+      # Same-core prerelease-only changes are intentionally unclassified.
+      sig do
+        override
+          .params(from_version: String, to_version: String)
+          .returns(T.nilable(String))
+      end
+      def self.update_type(from_version, to_version)
+        from_components = numeric_components(from_version)
+        to_components = numeric_components(to_version)
+        return unless from_components && to_components
+
+        from_major, from_minor, from_patch, from_revision = from_components
+        to_major, to_minor, to_patch, to_revision = to_components
+
+        return "major" if to_major > from_major
+        return "minor" if to_major == from_major && to_minor > from_minor
+        return "patch" if [to_major, to_minor] == [from_major, from_minor] && to_patch > from_patch
+
+        "patch" if [to_major, to_minor, to_patch] == [from_major, from_minor, from_patch] &&
+                   to_revision > from_revision
+      end
+
       sig { override.returns(String) }
       def inspect # :nodoc:
         "#<#{self.class} #{@version_string}>"
       end
+
+      sig { params(version: String).returns(T.nilable(NumericComponents)) }
+      def self.numeric_components(version)
+        return unless correct?(version)
+
+        match = VERSION_CORE_PATTERN.match(version)
+        return unless match
+
+        [
+          T.must(match[1]).to_i,
+          (match[2] || "0").to_i,
+          (match[3] || "0").to_i,
+          (match[4] || "0").to_i
+        ]
+      end
+      private_class_method :numeric_components
     end
   end
 end

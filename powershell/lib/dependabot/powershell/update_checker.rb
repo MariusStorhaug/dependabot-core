@@ -44,6 +44,17 @@ module Dependabot
         lowest_security_fix_version
       end
 
+      sig do
+        override
+          .params(_updated_version: T.any(String, Gem::Version))
+          .returns(T.nilable(T.any(String, Gem::Version)))
+      end
+      def latest_resolvable_previous_version(_updated_version)
+        return dependency.version if dependency.version
+
+        dependency.requirements.filter_map { |requirement| previous_requirement_version(requirement) }.first
+      end
+
       sig { override.returns(T::Array[Dependabot::DependencyRequirement]) }
       def updated_requirements
         requirements = RequirementsUpdater.new(
@@ -189,6 +200,21 @@ module Dependabot
       def exact_pin?
         dependency.requirements.any? do |requirement|
           requirement.metadata&.fetch(:version_key, nil) == "RequiredVersion"
+        end
+      end
+
+      sig { params(requirement: Dependabot::DependencyRequirement).returns(T.nilable(String)) }
+      def previous_requirement_version(requirement)
+        requirement_string = requirement.requirement
+        version_key = requirement.metadata&.fetch(:version_key, nil)
+        return unless requirement_string.is_a?(String) && version_key.is_a?(String)
+
+        case version_key
+        when "ModuleVersion"
+          requirement_string.delete_prefix(">=").strip
+        when "MaximumVersion", "ModuleVersion+MaximumVersion"
+          maximum = requirement_string.split(",").map(&:strip).find { |constraint| constraint.start_with?("<=") }
+          maximum&.delete_prefix("<=")&.strip
         end
       end
     end
