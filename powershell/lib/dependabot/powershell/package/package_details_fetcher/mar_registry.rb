@@ -75,7 +75,7 @@ module Dependabot
           sig { params(header: String).returns(T.nilable(String)) }
           def authenticate_bearer(header)
             super
-          rescue DockerRegistry2::NotFound, URI::InvalidURIError
+          rescue DockerRegistry2::NotFound, URI::Error
             raise DockerRegistry2::RegistryAuthenticationException, cause: nil
           end
         end

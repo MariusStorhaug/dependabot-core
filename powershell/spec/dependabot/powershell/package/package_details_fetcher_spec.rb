@@ -213,6 +213,27 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
         end
       end
 
+      context "when the tags response has a secret-bearing invalid URI component" do
+        let(:secret) { "MAR_COMPONENT_SECRET" }
+
+        before do
+          stub_request(:get, mar_tags_url).to_return(
+            status: 200,
+            body: JSON.dump("name" => "psresource/az.accounts", "tags" => ["4.0.0"]),
+            headers: { "Link" => "<mailto:#{secret}>; rel=\"next\"" }
+          )
+        end
+
+        it "raises a sanitized resolvability error without falling back" do
+          expect { fetcher.fetch }.to raise_error(Dependabot::DependencyFileNotResolvable) do |error|
+            expect(error.message).to include("Microsoft Artifact Registry", "Az.Accounts", "pagination")
+            expect(error.full_message).not_to include(secret)
+            expect(error.cause).to be_nil
+          end
+          expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
+        end
+      end
+
       context "when the tags response repeats a pagination link" do
         before do
           repeated_url = "#{mar_tags_url}?last=4.0.0"
@@ -325,6 +346,29 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
       end
     end
 
+    context "when the Microsoft Artifact Registry bearer realm has an invalid URI component" do
+      let(:secret) { "MAR_REALM_COMPONENT_SECRET" }
+
+      before do
+        stub_request(:get, mar_tags_url).to_return(
+          status: 401,
+          headers: {
+            "Www-Authenticate" =>
+              ["Bearer", "realm=\"mailto:#{secret}\",service=\"mcr.microsoft.com\""].join(" ")
+          }
+        )
+      end
+
+      it "raises a sanitized authentication error instead of exposing the realm" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::PrivateSourceAuthenticationFailure) do |error|
+          expect(error.source).to eq("https://mcr.microsoft.com")
+          expect(error.full_message).not_to include(secret)
+          expect(error.cause).to be_nil
+        end
+        expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
+      end
+    end
+
     context "when Microsoft Artifact Registry times out" do
       before do
         stub_request(:get, mar_tags_url).to_raise(DockerRegistry2::RegistryUnknownException)
@@ -381,6 +425,21 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
           Dependabot::DependencyFileNotResolvable,
           /Microsoft Artifact Registry.*Pester/i
         )
+        expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
+      end
+    end
+
+    context "when Microsoft Artifact Registry returns a tag with invalid UTF-8" do
+      before do
+        body = %({"name":"psresource/pester","tags":["5.4.0\xFF"]}).b.force_encoding(Encoding::UTF_8)
+        stub_request(:get, mar_tags_url).to_return(status: 200, body: body)
+      end
+
+      it "raises a sanitized resolvability error" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::DependencyFileNotResolvable) do |error|
+          expect(error.message).to include("Microsoft Artifact Registry", "Pester")
+          expect(error.cause).to be_nil
+        end
         expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
       end
     end
@@ -606,6 +665,26 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
         expect { fetcher.fetch }.to raise_error(Dependabot::DependencyFileNotResolvable) do |error|
           expect(error.message).to include("PowerShell Gallery", "Pester", "pagination")
           expect(error.full_message).not_to include(secret, "access_token")
+          expect(error.cause).to be_nil
+        end
+      end
+    end
+
+    context "when a next-page link contains a secret-bearing invalid URI component" do
+      let(:secret) { "GALLERY_COMPONENT_SECRET" }
+
+      before do
+        body = feed_xml(
+          entries: [entry_xml(version: "5.4.0")],
+          next_link: "mailto:#{secret}"
+        )
+        stub_request(:get, find_packages_by_id_url).to_return(status: 200, body: body)
+      end
+
+      it "raises a sanitized resolvability error" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::DependencyFileNotResolvable) do |error|
+          expect(error.message).to include("PowerShell Gallery", "Pester", "pagination")
+          expect(error.full_message).not_to include(secret)
           expect(error.cause).to be_nil
         end
       end

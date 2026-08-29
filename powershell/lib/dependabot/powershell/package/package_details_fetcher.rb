@@ -206,7 +206,7 @@ module Dependabot
 
           visited_urls[current_url] = true
           current_url
-        rescue URI::InvalidURIError
+        rescue URI::Error
           raise InvalidMarPagination, cause: nil
         end
 
@@ -234,7 +234,8 @@ module Dependabot
           raise InvalidMarResponse, "Invalid tags response for #{dependency.name}" unless page.is_a?(Hash)
 
           page_tags = page["tags"]
-          unless page_tags.is_a?(Array) && page_tags.all?(String)
+          unless page_tags.is_a?(Array) &&
+                 page_tags.all? { |tag| tag.is_a?(String) && tag.valid_encoding? }
             raise InvalidMarResponse, "Invalid tags response for #{dependency.name}"
           end
 
@@ -251,7 +252,7 @@ module Dependabot
           raise InvalidMarPagination unless match
 
           URI.join(response.request_url, T.must(match[:url])).to_s
-        rescue URI::InvalidURIError
+        rescue URI::Error
           raise InvalidMarPagination, cause: nil
         end
 
@@ -303,7 +304,7 @@ module Dependabot
 
           visited_urls[current_url] = true
           current_url
-        rescue URI::InvalidURIError
+        rescue URI::Error
           raise Dependabot::DependencyFileNotResolvable,
                 "PowerShell Gallery response for #{dependency.name} contained an invalid pagination URL",
                 cause: nil
@@ -344,7 +345,7 @@ module Dependabot
           manifest = docker_registry_client.manifest(mar_repository_name, version)
           metadata = MarRegistry.manifest_metadata(manifest)
           guid = metadata["GUID"] if metadata.is_a?(Hash)
-          return guid if guid.is_a?(String) && guid.match?(GUID_PATTERN)
+          return guid if guid.is_a?(String) && guid.valid_encoding? && guid.match?(GUID_PATTERN)
 
           raise Dependabot::DependencyFileNotResolvable,
                 "Microsoft Artifact Registry manifest for #{dependency.name} #{version} did not contain a valid GUID"

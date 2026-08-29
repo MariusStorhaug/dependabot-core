@@ -521,6 +521,26 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
         end
       end
 
+      context "when the selected MAR manifest contains an invalid UTF-8 GUID" do
+        let(:mar_manifest_body) do
+          %({
+            "layers":[{
+              "annotations":{
+                "metadata":"{\\"GUID\\":\\"17a2feff-488b-47f9-8729-e2cec094624c\xFF\\"}"
+              }
+            }]
+          }).b.force_encoding(Encoding::UTF_8)
+        end
+
+        it "does not emit an update with an unvalidated GUID" do
+          expect { checker.updated_dependencies(requirements_to_unlock: :own) }
+            .to raise_error(Dependabot::DependencyFileNotResolvable) do |error|
+              expect(error.message).to match(/Az\.Accounts.*5\.5\.2.*valid GUID/i)
+              expect(error.cause).to be_nil
+            end
+        end
+      end
+
       context "when the selected MAR manifest has a certificate failure" do
         before do
           stub_request(
