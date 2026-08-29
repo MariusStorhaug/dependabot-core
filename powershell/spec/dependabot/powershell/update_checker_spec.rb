@@ -305,6 +305,21 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
       it "is not up to date" do
         expect(checker.up_to_date?).to be(false)
       end
+
+      it "can update by unlocking its own requirement" do
+        expect(checker.can_update?(requirements_to_unlock: :own)).to be(true)
+      end
+
+      it "returns the padded version and requirement through the public update path" do
+        expect(checker.updated_requirements.first.requirement).to eq("= 0.12.0")
+
+        updated_dependency = checker.updated_dependencies(requirements_to_unlock: :own).first
+        expect(updated_dependency).to have_attributes(
+          version: "0.12.0",
+          previous_version: "0.12"
+        )
+        expect(updated_dependency.requirements.first.requirement).to eq("= 0.12.0")
+      end
     end
 
     context "when an exact pin differs from the latest version only by leading zeroes" do
@@ -314,6 +329,11 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
 
       it "is up to date" do
         expect(checker.up_to_date?).to be(true)
+      end
+
+      it "does not produce an update for the normalized equivalent" do
+        expect(checker.can_update?(requirements_to_unlock: :own)).to be(false)
+        expect(checker.updated_dependencies(requirements_to_unlock: :own)).to be_empty
       end
     end
 

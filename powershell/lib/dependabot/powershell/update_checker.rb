@@ -87,6 +87,24 @@ module Dependabot
         end
       end
 
+      sig { override.params(requirements_to_unlock: T.nilable(Symbol)).returns(T::Boolean) }
+      def version_can_update?(requirements_to_unlock:)
+        if exact_pin? && requirements_to_unlock&.to_sym == :own
+          target_version = preferred_resolvable_version
+          current_version = dependency.version
+          comparison = ModuleSpecificationVersion.compare(target_version.to_s, current_version.to_s)
+
+          if comparison
+            requirements_updatable = updated_requirements.none? do |requirement|
+              requirement.requirement == :unfixable
+            end
+            return comparison.positive? && requirements_updatable
+          end
+        end
+
+        super
+      end
+
       sig { override.returns(T::Boolean) }
       def latest_version_resolvable_with_full_unlock?
         # Full unlock (updating other dependencies to help this one update)
