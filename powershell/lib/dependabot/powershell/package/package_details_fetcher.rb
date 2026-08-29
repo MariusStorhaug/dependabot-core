@@ -22,8 +22,24 @@ module Dependabot
         require_relative "package_details_fetcher/mar_fetcher"
         require_relative "package_details_fetcher/powershell_gallery_fetcher"
 
+        InvalidMarResponse = MarFetcher::InvalidResponse
+        InvalidMarPagination = MarFetcher::InvalidPagination
+
+        PSGALLERY_API_BASE = PowershellGalleryFetcher::API_BASE
+        MAR_API_BASE = MarFetcher::API_BASE
+        MAR_REPOSITORY_PREFIX = MarFetcher::REPOSITORY_PREFIX
+        MAR_OPEN_TIMEOUT_IN_SECONDS = MarFetcher::OPEN_TIMEOUT_IN_SECONDS
+        MAR_READ_TIMEOUT_IN_SECONDS = MarFetcher::READ_TIMEOUT_IN_SECONDS
+        MAR_SOURCE = MarFetcher::SOURCE
+        PSGALLERY_SOURCE = PowershellGalleryFetcher::SOURCE
+
         # Defends against pathological or looping registry pagination.
         MAX_PAGES = 25
+
+        UNLISTED_PUBLISHED_DATE = PowershellGalleryFetcher::UNLISTED_PUBLISHED_DATE
+        PSGALLERY_WEB_BASE = PowershellGalleryFetcher::WEB_BASE
+        MANIFEST_GUID_PATTERN = PowershellGalleryFetcher::MANIFEST_GUID_PATTERN
+        GUID_PATTERN = MarFetcher::GUID_PATTERN
 
         sig { params(dependency: Dependabot::Dependency).void }
         def initialize(dependency:)
