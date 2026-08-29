@@ -6,6 +6,7 @@ require "dependabot/dependency"
 require "dependabot/dependency_file"
 require "dependabot/credential"
 require "dependabot/security_advisory"
+require "dependabot/config/ignore_condition"
 require "dependabot/powershell/update_checker"
 require_common_spec "update_checkers/shared_examples_for_update_checkers"
 
@@ -418,6 +419,63 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
           previous_version: "0.12"
         )
         expect(updated_dependency.requirements.first.requirement).to eq("= 0.12.0")
+      end
+    end
+
+    context "when registry ordering treats native versions as equal" do
+      it "uses the native-sorted candidate for freshness regardless of release order" do
+        [%w(1.2 1.2.0), %w(1.2.0 1.2)].each do |versions|
+          body = feed_xml(entries: versions.map { |version| entry_xml(version: version) })
+          stub_request(:get, find_packages_by_id_url).to_return(status: 200, body: body)
+
+          current_checker = described_class.new(
+            dependency: Dependabot::Dependency.new(
+              name: "Pester",
+              version: "1.2.0",
+              requirements: [requirements.first.merge(requirement: "= 1.2.0")],
+              package_manager: "powershell"
+            ),
+            dependency_files: [],
+            credentials: [],
+            ignored_versions: [],
+            security_advisories: []
+          )
+          update_checker = described_class.new(
+            dependency: Dependabot::Dependency.new(
+              name: "Pester",
+              version: "1.2",
+              requirements: [requirements.first.merge(requirement: "= 1.2")],
+              package_manager: "powershell"
+            ),
+            dependency_files: [],
+            credentials: [],
+            ignored_versions: [],
+            security_advisories: []
+          )
+
+          expect(current_checker.up_to_date?).to be(true)
+          expect(current_checker.updated_dependencies(requirements_to_unlock: :own)).to be_empty
+          expect(update_checker.up_to_date?).to be(false)
+          expect(update_checker.updated_dependencies(requirements_to_unlock: :own).first.version).to eq("1.2.0")
+        end
+      end
+    end
+
+    context "when patch updates are ignored" do
+      let(:available_versions) { %w(1.2 1.2.0) }
+      let(:dependency_version) { "1.2" }
+      let(:dependency_requirement) { "= 1.2" }
+      let(:ignored_versions) do
+        Dependabot::Config::IgnoreCondition.new(
+          dependency_name: "Pester",
+          update_types: [Dependabot::Config::IgnoreCondition::PATCH_VERSION_TYPE]
+        ).ignored_versions(dependency, false)
+      end
+
+      it "does not emit a component-count-only patch update" do
+        expect(ignored_versions).to contain_exactly("> 1.2, < 1.3", "= 1.2.0", "= 1.2.0.0")
+        expect(checker.can_update?(requirements_to_unlock: :own)).to be(false)
+        expect(checker.updated_dependencies(requirements_to_unlock: :own)).to be_empty
       end
     end
 
