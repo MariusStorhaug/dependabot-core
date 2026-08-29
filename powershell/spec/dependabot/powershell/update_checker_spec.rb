@@ -2,6 +2,8 @@
 # frozen_string_literal: true
 
 require "spec_helper"
+require "dependabot/config/ignore_condition"
+require "dependabot/config/update_config"
 require "dependabot/dependency"
 require "dependabot/dependency_file"
 require "dependabot/credential"
@@ -140,6 +142,29 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
 
           expect(fresh_checker.latest_resolvable_version.to_s).to eq("1.2.0")
         end
+      end
+    end
+
+    context "when a configured patch ignore covers a component-count-only update" do
+      let(:available_versions) { ["1.2.0"] }
+      let(:dependency_version) { "1.2" }
+      let(:dependency_requirement) { "= 1.2" }
+      let(:ignored_versions) do
+        Dependabot::Config::UpdateConfig.new(
+          ignore_conditions: [
+            Dependabot::Config::IgnoreCondition.new(
+              dependency_name: dependency.name,
+              update_types: ["version-update:semver-patch"]
+            )
+          ]
+        ).ignored_versions_for(dependency, security_updates_only: false)
+      end
+
+      it "suppresses the native patch update through the public checker path" do
+        expect(ignored_versions).to include("= 1.2.0")
+        expect(checker.latest_resolvable_version).to be_nil
+        expect(checker.can_update?(requirements_to_unlock: :own)).to be(false)
+        expect(checker.updated_dependencies(requirements_to_unlock: :own)).to be_empty
       end
     end
   end
