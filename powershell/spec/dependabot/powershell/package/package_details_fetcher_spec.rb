@@ -164,8 +164,10 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
           stub_request(:get, "#{mar_tags_url}?last=4.0.0").to_return(status: 404, body: "")
         end
 
-        it "discards partial MAR results without falling back to the PowerShell Gallery" do
-          expect(fetcher.fetch.releases).to eq([])
+        it "raises a registry error without falling back to the PowerShell Gallery" do
+          expect { fetcher.fetch }.to raise_error(Dependabot::RegistryError) do |error|
+            expect(error.status).to eq(404)
+          end
           expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
         end
       end
@@ -179,8 +181,11 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
           )
         end
 
-        it "returns no releases without falling back to the PowerShell Gallery" do
-          expect(fetcher.fetch.releases).to eq([])
+        it "raises a resolvability error without falling back to the PowerShell Gallery" do
+          expect { fetcher.fetch }.to raise_error(
+            Dependabot::DependencyFileNotResolvable,
+            /Microsoft Artifact Registry.*Az\.Accounts.*pagination/i
+          )
           expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
         end
       end
@@ -200,8 +205,11 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
           )
         end
 
-        it "returns no releases instead of looping or falling back" do
-          expect(fetcher.fetch.releases).to eq([])
+        it "raises a resolvability error instead of looping or falling back" do
+          expect { fetcher.fetch }.to raise_error(
+            Dependabot::DependencyFileNotResolvable,
+            /Microsoft Artifact Registry.*Az\.Accounts.*pagination/i
+          )
           expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
         end
       end
@@ -229,8 +237,37 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
         stub_request(:get, mar_tags_url).to_return(status: 500, body: "")
       end
 
-      it "does not downgrade to the PowerShell Gallery" do
-        expect(fetcher.fetch.releases).to eq([])
+      it "raises a registry error without downgrading to the PowerShell Gallery" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::RegistryError) do |error|
+          expect(error.status).to eq(500)
+          expect(error.message).to include("Microsoft Artifact Registry", "Pester")
+        end
+        expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
+      end
+    end
+
+    context "when Microsoft Artifact Registry authentication fails" do
+      before do
+        stub_request(:get, mar_tags_url).to_raise(DockerRegistry2::RegistryAuthenticationException)
+      end
+
+      it "raises a typed authentication error without downgrading to the PowerShell Gallery" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::PrivateSourceAuthenticationFailure) do |error|
+          expect(error.source).to eq("https://mcr.microsoft.com")
+        end
+        expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
+      end
+    end
+
+    context "when Microsoft Artifact Registry times out" do
+      before do
+        stub_request(:get, mar_tags_url).to_raise(DockerRegistry2::RegistryUnknownException)
+      end
+
+      it "raises a typed timeout error without downgrading to the PowerShell Gallery" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::PrivateSourceTimedOut) do |error|
+          expect(error.source).to eq("https://mcr.microsoft.com")
+        end
         expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
       end
     end
@@ -240,8 +277,11 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
         stub_request(:get, mar_tags_url).to_return(status: 200, body: "null")
       end
 
-      it "returns no releases without falling back to the PowerShell Gallery" do
-        expect(fetcher.fetch.releases).to eq([])
+      it "raises a resolvability error without falling back to the PowerShell Gallery" do
+        expect { fetcher.fetch }.to raise_error(
+          Dependabot::DependencyFileNotResolvable,
+          /Microsoft Artifact Registry.*Pester/i
+        )
         expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
       end
     end
@@ -318,6 +358,17 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
       end
     end
 
+    context "when a valid feed contains no releases" do
+      before do
+        stub_request(:get, find_packages_by_id_url)
+          .to_return(status: 200, body: feed_xml(entries: []))
+      end
+
+      it "returns an empty release set for an absent package" do
+        expect(fetcher.fetch.releases).to be_empty
+      end
+    end
+
     context "when a release has the unlisted sentinel Published date" do
       before do
         body = feed_xml(
@@ -379,8 +430,43 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
           .to_return(status: 200, body: page1)
       end
 
-      it "discards partial releases" do
-        expect(fetcher.fetch.releases).to eq([])
+      it "raises rather than returning an incomplete release set" do
+        expect { fetcher.fetch }.to raise_error(
+          Dependabot::DependencyFileNotResolvable,
+          /PowerShell Gallery.*Pester.*page limit/i
+        )
+      end
+    end
+
+    context "when the feed contains malformed XML" do
+      before do
+        stub_request(:get, find_packages_by_id_url)
+          .to_return(status: 200, body: "<feed><entry></feed>")
+      end
+
+      it "raises a resolvability error" do
+        expect { fetcher.fetch }.to raise_error(
+          Dependabot::DependencyFileNotResolvable,
+          /PowerShell Gallery.*XML.*Pester/i
+        )
+      end
+    end
+
+    context "when a next-page link has no href" do
+      before do
+        body = <<~XML
+          <feed xmlns="http://www.w3.org/2005/Atom">
+            <link rel="next" />
+          </feed>
+        XML
+        stub_request(:get, find_packages_by_id_url).to_return(status: 200, body: body)
+      end
+
+      it "raises rather than treating an incomplete feed as complete" do
+        expect { fetcher.fetch }.to raise_error(
+          Dependabot::DependencyFileNotResolvable,
+          /PowerShell Gallery.*Pester.*pagination/i
+        )
       end
     end
 
@@ -410,10 +496,11 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
           .to_return(status: 500, body: "")
       end
 
-      it "returns an empty set of releases instead of raising" do
-        package_details = fetcher.fetch
-
-        expect(package_details.releases).to eq([])
+      it "raises a registry error with the HTTP status" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::RegistryError) do |error|
+          expect(error.status).to eq(500)
+          expect(error.message).to include("PowerShell Gallery", "Pester")
+        end
       end
     end
 
@@ -430,22 +517,35 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
           .to_return(status: 500, body: "")
       end
 
-      it "discards the first page's releases instead of returning an incomplete set" do
-        package_details = fetcher.fetch
-
-        expect(package_details.releases).to eq([])
+      it "raises instead of returning the first page's incomplete release set" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::RegistryError) do |error|
+          expect(error.status).to eq(500)
+        end
       end
     end
 
-    context "when the registry raises an error" do
+    context "when the registry times out" do
       before do
         stub_request(:get, find_packages_by_id_url).to_raise(Excon::Error::Timeout)
       end
 
-      it "rescues the error and returns an empty set of releases" do
-        package_details = fetcher.fetch
+      it "raises a typed timeout error" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::PrivateSourceTimedOut) do |error|
+          expect(error.source).to eq("https://www.powershellgallery.com/api/v2")
+        end
+      end
+    end
 
-        expect(package_details.releases).to eq([])
+    context "when the registry connection breaks" do
+      before do
+        stub_request(:get, find_packages_by_id_url)
+          .to_raise(Excon::Error::Socket.new(EOFError.new))
+      end
+
+      it "raises a typed bad-response error" do
+        expect { fetcher.fetch }.to raise_error(Dependabot::PrivateSourceBadResponse) do |error|
+          expect(error.source).to eq("https://www.powershellgallery.com/api/v2")
+        end
       end
     end
   end

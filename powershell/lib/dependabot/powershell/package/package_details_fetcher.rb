@@ -9,6 +9,7 @@ require "docker_registry2"
 require "nokogiri"
 require "sorbet-runtime"
 
+require "dependabot/errors"
 require "dependabot/registry_client"
 require "dependabot/powershell"
 require "dependabot/powershell/version"
@@ -148,16 +149,16 @@ module Dependabot
               details: { "registry" => "mar" }
             )
           end
-        # Only an initial not-found response proves the module has no MAR
-        # identity. Failing closed on every other error prevents an outage or
-        # malformed response from downgrading a Microsoft module to a
-        # same-named community package.
-        rescue DockerRegistry2::Exception, JSON::ParserError, InvalidMarResponse => e
-          Dependabot.logger.error(
-            "Microsoft Artifact Registry lookup failed for #{dependency.name}; " \
-            "PowerShell Gallery fallback is disabled for this failure: #{e.message}"
-          )
-          []
+        rescue DockerRegistry2::RegistryAuthenticationException,
+               DockerRegistry2::RegistryAuthorizationException
+          raise Dependabot::PrivateSourceAuthenticationFailure, MAR_API_BASE
+        rescue DockerRegistry2::RegistryUnknownException
+          raise Dependabot::PrivateSourceTimedOut, MAR_API_BASE
+        rescue DockerRegistry2::RegistryHTTPException => e
+          raise_mar_registry_error(e)
+        rescue JSON::ParserError, InvalidMarResponse => e
+          raise Dependabot::DependencyFileNotResolvable,
+                "Microsoft Artifact Registry response for #{dependency.name} was malformed or incomplete: #{e.message}"
         end
 
         sig { returns(T.nilable(T::Array[String])) }
@@ -209,7 +210,12 @@ module Dependabot
         def fetch_mar_tags_page(current_url, first_page:)
           docker_registry_client.doget(current_url)
         rescue DockerRegistry2::NotFound
-          raise InvalidMarResponse, "A later tags page was not found for #{dependency.name}" unless first_page
+          unless first_page
+            raise Dependabot::RegistryError.new(
+              404,
+              "Microsoft Artifact Registry returned HTTP 404 for a later tags page for #{dependency.name}"
+            )
+          end
 
           Dependabot.logger.info(
             "#{dependency.name} is not available from Microsoft Artifact Registry; " \
@@ -248,54 +254,81 @@ module Dependabot
         sig { returns(T::Array[Dependabot::Package::PackageRelease]) }
         def fetch_psgallery_package_releases
           releases = T.let([], T::Array[Dependabot::Package::PackageRelease])
+          Dependabot.logger.info("Fetching package (PowerShell Gallery) info for #{dependency.name}")
 
-          begin
-            Dependabot.logger.info("Fetching package (PowerShell Gallery) info for #{dependency.name}")
+          url = T.let(find_packages_by_id_url, T.nilable(String))
+          visited_urls = T.let({}, T::Hash[String, T::Boolean])
+          pages = 0
 
-            url = T.let(find_packages_by_id_url, T.nilable(String))
-            pages = 0
+          while url
+            current_url = prepare_psgallery_page_url(url, visited_urls, pages)
+            response = fetch_psgallery_page(current_url)
+            document = parse_psgallery_page(response.body)
 
-            while url && pages < MAX_PAGES
-              response = Dependabot::RegistryClient.get(url: url)
-
-              # A registry failure partway through pagination means the feed
-              # is incomplete - selecting a "latest" version from whatever
-              # pages happened to succeed could pick an outdated version, so
-              # the whole fetch is treated as failed rather than returning a
-              # partial release list.
-              unless response.status == 200
-                Dependabot.logger.error(
-                  "PowerShell Gallery returned HTTP #{response.status} while paging package info for " \
-                  "#{dependency.name}; discarding partial results"
-                )
-                return []
-              end
-
-              document = Nokogiri::XML(response.body)
-              document.remove_namespaces!
-
-              document.css("entry").each do |entry|
-                release = build_release(entry)
-                releases << release if release
-              end
-
-              url = next_page_url(document)
-              pages += 1
+            document.css("entry").each do |entry|
+              release = build_release(entry)
+              releases << release if release
             end
 
-            if url && pages >= MAX_PAGES
-              Dependabot.logger.error(
-                "PowerShell Gallery feed for #{dependency.name} exceeded the #{MAX_PAGES}-page limit; " \
-                "discarding partial results"
-              )
-              return []
-            end
-
-            releases
-          rescue StandardError => e
-            Dependabot.logger.error("Error while fetching package info for powershell packages: #{e.message}")
-            []
+            url = next_page_url(document)
+            pages += 1
           end
+
+          releases
+        end
+
+        sig do
+          params(
+            next_url: String,
+            visited_urls: T::Hash[String, T::Boolean],
+            pages: Integer
+          ).returns(String)
+        end
+        def prepare_psgallery_page_url(next_url, visited_urls, pages)
+          page_limit_error = "PowerShell Gallery feed for #{dependency.name} exceeded the #{MAX_PAGES}-page limit"
+          raise Dependabot::DependencyFileNotResolvable, page_limit_error if pages >= MAX_PAGES
+
+          current_url = URI.join("#{PSGALLERY_API_BASE}/", next_url).to_s
+          uri = URI(current_url)
+          invalid_url_error = "PowerShell Gallery response for #{dependency.name} contained an invalid pagination URL"
+          valid_uri = uri.scheme == "https" && uri.host == URI(PSGALLERY_API_BASE).host
+          raise Dependabot::DependencyFileNotResolvable, invalid_url_error unless valid_uri
+
+          repeated_url_error = "PowerShell Gallery response for #{dependency.name} repeated a pagination URL"
+          raise Dependabot::DependencyFileNotResolvable, repeated_url_error if visited_urls[current_url]
+
+          visited_urls[current_url] = true
+          current_url
+        rescue URI::InvalidURIError => e
+          raise Dependabot::DependencyFileNotResolvable,
+                "PowerShell Gallery response for #{dependency.name} contained an invalid pagination URL: #{e.message}"
+        end
+
+        sig { params(url: String).returns(Excon::Response) }
+        def fetch_psgallery_page(url)
+          response = Dependabot::RegistryClient.get(url:)
+          return response if response.status == 200
+
+          message = "PowerShell Gallery returned HTTP #{response.status} while fetching #{dependency.name}"
+          raise Dependabot::RegistryError.new(response.status, message)
+        rescue Excon::Error::Timeout
+          raise Dependabot::PrivateSourceTimedOut, PSGALLERY_API_BASE
+        rescue Excon::Error::Socket
+          message = "PowerShell Gallery returned a broken response while fetching #{dependency.name}"
+          raise Dependabot::PrivateSourceBadResponse.new(PSGALLERY_API_BASE, message)
+        end
+
+        sig { params(body: String).returns(Nokogiri::XML::Document) }
+        def parse_psgallery_page(body)
+          document = Nokogiri::XML(body, &:strict)
+          document.remove_namespaces!
+          malformed_error = "PowerShell Gallery returned malformed XML for #{dependency.name}: expected a feed document"
+          raise Dependabot::DependencyFileNotResolvable, malformed_error unless document.root&.name == "feed"
+
+          document
+        rescue Nokogiri::XML::SyntaxError => e
+          raise Dependabot::DependencyFileNotResolvable,
+                "PowerShell Gallery returned malformed XML for #{dependency.name}: #{e.message}"
         end
 
         sig { params(version: String).returns(T.nilable(String)) }
@@ -361,8 +394,15 @@ module Dependabot
         sig { params(document: Nokogiri::XML::Document).returns(T.nilable(String)) }
         def next_page_url(document)
           next_link = document.at_css("feed > link[rel='next']") || document.at_css("link[rel='next']")
+          return unless next_link
+
           href = next_link&.attribute("href")&.value
-          href && !href.empty? ? href : nil
+          if href.nil? || href.empty?
+            raise Dependabot::DependencyFileNotResolvable,
+                  "PowerShell Gallery response for #{dependency.name} contained an invalid pagination link"
+          end
+
+          href
         end
 
         sig { params(entry: Nokogiri::XML::Element).returns(T.nilable(Dependabot::Package::PackageRelease)) }
@@ -380,9 +420,28 @@ module Dependabot
             yanked: unlisted?(published),
             url: content_url
           )
-        rescue StandardError => e
-          Dependabot.logger.error("Error while parsing a PowerShell Gallery feed entry: #{e.message}")
-          nil
+        end
+
+        sig { params(error: DockerRegistry2::RegistryHTTPException).returns(Integer) }
+        def registry_http_status(error)
+          if error.respond_to?(:status)
+            status = error.method(:status).call
+            return status if status.is_a?(Integer)
+          end
+
+          status = error.message[/status (\d+)/, 1]
+          return status.to_i if status
+
+          raise error
+        end
+
+        sig { params(error: DockerRegistry2::RegistryHTTPException).returns(T.noreturn) }
+        def raise_mar_registry_error(error)
+          status = registry_http_status(error)
+          raise Dependabot::RegistryError.new(
+            status,
+            "Microsoft Artifact Registry returned HTTP #{status} while fetching #{dependency.name}"
+          )
         end
 
         sig { params(published: T.nilable(String)).returns(T::Boolean) }
