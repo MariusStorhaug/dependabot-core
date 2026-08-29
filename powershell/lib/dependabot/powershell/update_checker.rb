@@ -25,10 +25,7 @@ module Dependabot
         # The PowerShell Gallery has no dependency-resolution step of its
         # own. A release is resolvable for this updater only when it can also
         # be represented in the native module specification being rewritten.
-        candidate = latest_version
-        return unless candidate && ModuleSpecificationVersion.parse(candidate.to_s)
-
-        candidate
+        latest_version_finder.latest_declaration_version
       end
 
       sig { override.returns(T.nilable(T.any(String, Gem::Version))) }

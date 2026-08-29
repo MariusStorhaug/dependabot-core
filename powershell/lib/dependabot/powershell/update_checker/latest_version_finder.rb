@@ -35,6 +35,20 @@ module Dependabot
           package_details_fetcher.selected_source
         end
 
+        sig { returns(T.nilable(Dependabot::Version)) }
+        def latest_declaration_version
+          releases = available_versions
+          return unless releases
+
+          releases = filter_yanked_versions(releases)
+          releases = filter_by_cooldown(releases)
+          releases = filter_unsupported_versions(releases, nil)
+          releases = filter_prerelease_versions(releases)
+          releases = filter_ignored_versions(releases)
+          releases = filter_module_specification_versions(releases)
+          releases.max_by(&:version)&.version
+        end
+
         protected
 
         sig { override.returns(T::Boolean) }
@@ -90,9 +104,7 @@ module Dependabot
                   .returns(T::Array[Dependabot::Package::PackageRelease])
         end
         def apply_post_fetch_lowest_security_fix_versions_filter(releases)
-          releases = releases.select do |release|
-            ModuleSpecificationVersion.parse(release.version.to_s)
-          end
+          releases = filter_module_specification_versions(releases)
 
           floor = module_version_floor
           return releases unless floor
@@ -101,6 +113,14 @@ module Dependabot
         end
 
         private
+
+        sig do
+          params(releases: T::Array[Dependabot::Package::PackageRelease])
+            .returns(T::Array[Dependabot::Package::PackageRelease])
+        end
+        def filter_module_specification_versions(releases)
+          releases.select { |release| ModuleSpecificationVersion.parse(release.version.to_s) }
+        end
 
         sig { returns(Dependabot::Powershell::Package::PackageDetailsFetcher) }
         def package_details_fetcher

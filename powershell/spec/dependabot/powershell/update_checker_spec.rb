@@ -93,6 +93,34 @@ RSpec.describe Dependabot::Powershell::UpdateChecker do
     it "matches the latest version, since PowerShell has no separate resolution step" do
       expect(checker.latest_resolvable_version.to_s).to eq("5.4.0")
     end
+
+    context "when the latest registry release is not representable in a module specification" do
+      let(:available_versions) { ["2.0.0.0.1", "1.5.0", "1.0.0"] }
+      let(:dependency_version) { "1.0.0" }
+      let(:dependency_requirement) { "= 1.0.0" }
+
+      it "preserves registry discovery and selects the highest representable update candidate" do
+        expect(checker.latest_version.to_s).to eq("2.0.0.0.1")
+        expect(checker.latest_resolvable_version.to_s).to eq("1.5.0")
+
+        updated_dependency = checker.updated_dependencies(requirements_to_unlock: :own).first
+        expect(updated_dependency).to have_attributes(version: "1.5.0", previous_version: "1.0.0")
+        expect(updated_dependency.requirements.first.requirement).to eq("= 1.5.0")
+      end
+    end
+
+    context "when no registry release is representable in a module specification" do
+      let(:available_versions) { ["2.0.0.0.1"] }
+      let(:dependency_version) { "1.0.0" }
+      let(:dependency_requirement) { "= 1.0.0" }
+
+      it "does not emit an invalid native declaration update" do
+        expect(checker.latest_version.to_s).to eq("2.0.0.0.1")
+        expect(checker.latest_resolvable_version).to be_nil
+        expect(checker.can_update?(requirements_to_unlock: :own)).to be(false)
+        expect(checker.updated_dependencies(requirements_to_unlock: :own)).to be_empty
+      end
+    end
   end
 
   describe "#latest_resolvable_version_with_no_unlock" do
