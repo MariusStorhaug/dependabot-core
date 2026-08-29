@@ -190,6 +190,19 @@ RSpec.describe Dependabot::Powershell::MetadataFinder do
       end
     end
 
+    context "when Gallery metadata identifies a GitLab subgroup repository" do
+      let(:dependency_name) { "SubgroupModule" }
+      let(:dependency_version) { "1.0.0" }
+
+      before do
+        stub_gallery(project_url: "https://gitlab.com/org/group/repository")
+      end
+
+      it "preserves the supported subgroup namespace" do
+        expect(source_url).to eq("https://gitlab.com/org/group/repository")
+      end
+    end
+
     context "when Gallery metadata identifies an Azure DevOps repository path" do
       let(:dependency_name) { "Get-AzVMDeletionActivity" }
       let(:dependency_version) { "0.6.0" }
@@ -205,6 +218,52 @@ RSpec.describe Dependabot::Powershell::MetadataFinder do
       end
     end
 
+    context "when Gallery metadata identifies a project-less Azure DevOps repository" do
+      let(:dependency_name) { "ProjectlessAzureModule" }
+      let(:dependency_version) { "1.0.0" }
+
+      before do
+        stub_gallery(project_url: "https://dev.azure.com/greysteil/_git/dependabot-test?path")
+      end
+
+      it "preserves the supported project-less repository path" do
+        expect(source_url).to eq("https://dev.azure.com/greysteil/_git/dependabot-test")
+      end
+    end
+
+    {
+      "GitHub tree" => [
+        "https://github.com/stadub/PowershellScripts/tree/master/7Zip",
+        "https://github.com/stadub/PowershellScripts"
+      ],
+      "GitHub blob" => [
+        "https://github.com/organization/repository/blob/main/README.md",
+        "https://github.com/organization/repository"
+      ],
+      "GitLab subgroup blob" => [
+        "https://gitlab.com/organization/group/repository/blob/main/README.md",
+        "https://gitlab.com/organization/group/repository"
+      ],
+      "GitLab modern tree" => [
+        "https://gitlab.com/organization/repository/-/tree/main/lib",
+        "https://gitlab.com/organization/repository"
+      ],
+      "Bitbucket source" => [
+        "https://bitbucket.org/organization/repository/src/main/README.md",
+        "https://bitbucket.org/organization/repository"
+      ]
+    }.each do |description, (project_url, expected_source_url)|
+      context "when Gallery metadata identifies a #{description} URL" do
+        before do
+          stub_gallery(project_url: project_url)
+        end
+
+        it "returns the canonical repository URL" do
+          expect(source_url).to eq(expected_source_url)
+        end
+      end
+    end
+
     {
       "missing" => nil,
       "empty" => "",
@@ -216,7 +275,11 @@ RSpec.describe Dependabot::Powershell::MetadataFinder do
       "unsupported-host" => "https://example.com/Pester/Pester",
       "embedded-host" => "https://github.com/127.0.0.1:3000/Pester/Pester",
       "unsupported-CodeCommit" => "https://git-codecommit.eu-west-1.amazonaws.com/v1/repos/Pester",
-      "non-repository" => "https://www.powershellgallery.com/packages/Pester"
+      "non-repository" => "https://www.powershellgallery.com/packages/Pester",
+      "GitHub-dot-segment" => "https://github.com/../Pester",
+      "GitLab-dot-segment" => "https://gitlab.com/group/../Pester",
+      "Bitbucket-dot-segment" => "https://bitbucket.org/./Pester",
+      "Azure-dot-segment" => "https://dev.azure.com/organization/../_git/Pester"
     }.each do |description, project_url|
       context "when Gallery project metadata is #{description}" do
         before do

@@ -12,9 +12,22 @@ module Dependabot
       extend T::Sig
 
       PUBLIC_SOURCE_HOSTS = %w(github.com gitlab.com bitbucket.org dev.azure.com).freeze
-      PUBLIC_REPOSITORY_PATH = %r{\A/(?<owner>[\w.-]+)/(?<repository>[\w.-]+)/?\z}
+      INVALID_PATH_SEGMENTS = %w(. ..).freeze
+      GITHUB_REPOSITORY_PATH = %r{
+        \A/(?<owner>[\w.-]+)/(?<repository>[\w.-]+)(?:/(?:tree|blob)/[^/]+(?:/.*)?)?/?\z
+      }x
+      GITLAB_REPOSITORY_PATH = %r{
+        \A
+        /(?<namespace>[\w.-]+(?:/[\w.-]+)?)
+        /(?<repository>[\w.-]+)
+        (?:(?:/-)?/(?:tree|blob)/[^/]+(?:/.*)?)?
+        /?\z
+      }x
+      BITBUCKET_REPOSITORY_PATH = %r{
+        \A/(?<owner>[\w.-]+)/(?<repository>[\w.-]+)(?:/src/[^/]+(?:/.*)?)?/?\z
+      }x
       AZURE_REPOSITORY_PATH = %r{
-        \A/(?<organization>[\w.-]+)/(?<project>[\w.-]+)/_git/(?<repository>[\w.-]+)/?\z
+        \A/(?<organization>[\w.-]+)(?:/(?<project>[\w.-]+))?/_git/(?<repository>[\w.-]+)/?\z
       }x
 
       private
@@ -36,6 +49,23 @@ module Dependabot
 
       sig { params(url: String).returns(T.nilable(String)) }
       def canonical_source_url(url)
+        uri = public_source_uri(url)
+        return unless uri
+
+        host = T.cast(uri.host, String).downcase
+        path = T.cast(uri.path, String)
+        return canonical_azure_url(host, path) if host == "dev.azure.com"
+        return canonical_gitlab_url(host, path) if host == "gitlab.com"
+
+        path_pattern = host == "bitbucket.org" ? BITBUCKET_REPOSITORY_PATH : GITHUB_REPOSITORY_PATH
+        match = path_pattern.match(path)
+        return unless match
+
+        "https://#{host}/#{match[:owner]}/#{match[:repository]}"
+      end
+
+      sig { params(url: String).returns(T.nilable(URI::HTTP)) }
+      def public_source_uri(url)
         uri = URI.parse(url)
         return unless uri.is_a?(URI::HTTP)
 
@@ -43,16 +73,19 @@ module Dependabot
         return unless host && PUBLIC_SOURCE_HOSTS.include?(host)
         return unless uri.userinfo.nil?
         return unless url.match?(%r{\Ahttps?://#{Regexp.escape(host)}/}i)
+        return if T.cast(uri.path, String).split("/").intersect?(INVALID_PATH_SEGMENTS)
 
-        path = T.cast(uri.path, String)
-        return canonical_azure_url(host, path) if host == "dev.azure.com"
-
-        match = PUBLIC_REPOSITORY_PATH.match(path)
-        return unless match
-
-        "https://#{host}/#{match[:owner]}/#{match[:repository]}"
+        uri
       rescue URI::Error
         nil
+      end
+
+      sig { params(host: String, path: String).returns(T.nilable(String)) }
+      def canonical_gitlab_url(host, path)
+        match = GITLAB_REPOSITORY_PATH.match(path)
+        return unless match
+
+        "https://#{host}/#{match[:namespace]}/#{match[:repository]}"
       end
 
       sig { params(host: String, path: String).returns(T.nilable(String)) }
@@ -60,7 +93,8 @@ module Dependabot
         match = AZURE_REPOSITORY_PATH.match(path)
         return unless match
 
-        "https://#{host}/#{match[:organization]}/#{match[:project]}/_git/#{match[:repository]}"
+        project_path = match[:project] ? "/#{match[:project]}" : ""
+        "https://#{host}/#{match[:organization]}#{project_path}/_git/#{match[:repository]}"
       end
 
       sig { returns(Dependabot::Powershell::Package::PackageDetailsFetcher) }
