@@ -3,6 +3,7 @@
 
 require "dependabot/version"
 require "dependabot/utils"
+require "dependabot/powershell/module_specification_version"
 
 module Dependabot
   module Powershell
@@ -52,6 +53,21 @@ module Dependabot
       sig { override.returns(Integer) }
       def hash
         to_s.hash
+      end
+
+      sig { override.returns(T::Array[String]) }
+      def ignored_patch_versions
+        native_version = ModuleSpecificationVersion.normalize(to_s)
+        return super unless native_version
+
+        components = native_version.split(".")
+        padded_versions = []
+        while components.length < ModuleSpecificationVersion::MAX_COMPONENT_COUNT
+          components << "0"
+          padded_versions << "= #{components.join('.')}"
+        end
+
+        super + padded_versions
       end
 
       # Same-core prerelease-only changes are intentionally unclassified.

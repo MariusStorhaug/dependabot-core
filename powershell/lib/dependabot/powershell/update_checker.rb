@@ -81,7 +81,7 @@ module Dependabot
       def version_up_to_date?
         if exact_pin?
           current_version = T.must(dependency.version)
-          candidate_version = latest_version.to_s
+          candidate_version = latest_resolvable_version.to_s
           comparison = ModuleSpecificationVersion.compare(current_version, candidate_version)
 
           return comparison.zero? if comparison
