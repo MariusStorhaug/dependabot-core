@@ -291,6 +291,26 @@ RSpec.describe Dependabot::Powershell::Package::PackageDetailsFetcher do
         end
       end
 
+      context "when the tags response has an invalid UTF-8 pagination header" do
+        before do
+          link = "</v2/psresource/az.accounts/tags/list?last=4.0.0\xFF>; rel=\"next\""
+                 .b.force_encoding(Encoding::UTF_8)
+          stub_request(:get, mar_tags_url).to_return(
+            status: 200,
+            body: JSON.dump("name" => "psresource/az.accounts", "tags" => ["4.0.0"]),
+            headers: { "Link" => link }
+          )
+        end
+
+        it "raises a sanitized resolvability error without falling back" do
+          expect { fetcher.fetch }.to raise_error(Dependabot::DependencyFileNotResolvable) do |error|
+            expect(error.message).to include("Microsoft Artifact Registry", "Az.Accounts", "pagination")
+            expect(error.cause).to be_nil
+          end
+          expect(a_request(:get, find_packages_by_id_url)).not_to have_been_made
+        end
+      end
+
       context "when the tags response has a secret-bearing invalid pagination URL" do
         let(:secret) { "MAR_URL_SECRET" }
 

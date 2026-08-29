@@ -246,7 +246,7 @@ module Dependabot
         def mar_next_page_url(response)
           link = response.headers[:link]
           return unless link
-          raise InvalidMarPagination unless link.is_a?(String)
+          raise InvalidMarPagination unless link.is_a?(String) && link.valid_encoding?
 
           match = link.match(/<(?<url>[^>]+)>\s*;\s*rel="?next"?/i)
           raise InvalidMarPagination unless match
