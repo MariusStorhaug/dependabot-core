@@ -21,7 +21,7 @@ module Dependabot
           class InvalidResponse < StandardError; end
           class InvalidPagination < InvalidResponse; end
 
-          API_BASE = "https://#{MarRegistry::MAR_HOST}".freeze
+          API_BASE = T.let("https://#{MarRegistry::MAR_HOST}".freeze, String)
           REPOSITORY_PREFIX = "psresource/"
           OPEN_TIMEOUT_IN_SECONDS = 2
           READ_TIMEOUT_IN_SECONDS = 60
