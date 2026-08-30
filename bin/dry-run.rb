@@ -685,6 +685,7 @@ begin
 
   fetcher = Dependabot::FileFetchers.for_package_manager($package_manager).new(**fetcher_args)
   $files = fetch_files(fetcher)
+  pull_request_mode&.validate_dependency_files!($files)
   return if $files.empty?
 
   base_commit = fetcher.commit if pull_request_mode

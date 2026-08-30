@@ -58,6 +58,13 @@ module Dependabot
               "--create-pull-request requires exactly one matching parsed dependency"
       end
 
+      sig { params(files: T::Array[Dependabot::DependencyFile]).void }
+      def validate_dependency_files!(files)
+        return if files.any?
+
+        raise "--create-pull-request requires fetched dependency files"
+      end
+
       sig { returns(T::Boolean) }
       def created?
         @created

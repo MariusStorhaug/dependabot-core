@@ -199,4 +199,16 @@ RSpec.describe Dependabot::DryRun::PullRequestMode do
         .to raise_error(ArgumentError, /requires exactly one matching parsed dependency/)
     end
   end
+
+  describe "#validate_dependency_files!" do
+    it "accepts fetched dependency files" do
+      expect { mode.validate_dependency_files!([instance_double(Dependabot::DependencyFile)]) }
+        .not_to raise_error
+    end
+
+    it "rejects an empty fetch result" do
+      expect { mode.validate_dependency_files!([]) }
+        .to raise_error(RuntimeError, /requires fetched dependency files/)
+    end
+  end
 end
