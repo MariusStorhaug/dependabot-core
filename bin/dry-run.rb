@@ -711,6 +711,7 @@ begin
       $options[:dependency_names].include?(d.name.downcase)
     end
   end
+  pull_request_mode&.validate_dependency_selection!(dependencies)
 
   def update_checker_for(dependency)
     Dependabot::UpdateCheckers.for_package_manager($package_manager).new(
@@ -990,6 +991,10 @@ begin
 
     puts " => handled error whilst updating #{dep.name}: #{error_details.error_type} " \
          "#{error_details.error_detail}"
+  end
+
+  if pull_request_mode && !pull_request_mode.created?
+    raise "No pull request was created for #{$options[:dependency_names].first}"
   end
 
   StackProf.stop if $options[:profile]

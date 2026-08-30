@@ -35,6 +35,7 @@ module Dependabot
         @credentials = credentials
         @dependency_names = dependency_names
         @cache_steps = cache_steps
+        @created = T.let(false, T::Boolean)
       end
 
       sig { void }
@@ -49,6 +50,19 @@ module Dependabot
               "--create-pull-request requires a git_source credential for #{source.hostname}"
       end
 
+      sig { params(dependencies: T::Array[Dependabot::Dependency]).void }
+      def validate_dependency_selection!(dependencies)
+        return if dependencies.one?
+
+        raise ArgumentError,
+              "--create-pull-request requires exactly one matching parsed dependency"
+      end
+
+      sig { returns(T::Boolean) }
+      def created?
+        @created
+      end
+
       sig do
         params(
           base_commit: T.nilable(String),
@@ -60,9 +74,10 @@ module Dependabot
       end
       def create(base_commit:, dependencies:, files:, message:, commit_message_options:)
         validate!
+        raise ArgumentError, "--create-pull-request creates at most one pull request" if created?
         raise ArgumentError, "--create-pull-request requires a resolved base commit" if base_commit.to_s.empty?
 
-        Dependabot::PullRequestCreator.new(
+        pull_request = Dependabot::PullRequestCreator.new(
           source: source,
           base_commit: T.must(base_commit),
           dependencies: dependencies,
@@ -74,6 +89,11 @@ module Dependabot
           label_language: true,
           require_up_to_date_base: true
         ).create
+
+        raise "Pull request creation did not return a pull request" unless pull_request
+
+        @created = true
+        pull_request
       end
 
       private

@@ -155,5 +155,48 @@ RSpec.describe Dependabot::DryRun::PullRequestMode do
         )
       end.to raise_error(ArgumentError, /requires a resolved base commit/)
     end
+
+    it "rejects a second pull request creation attempt" do
+      allow(Dependabot::PullRequestCreator).to receive(:new).and_return(creator)
+
+      2.times do |attempt|
+        invocation = lambda do
+          mode.create(
+            base_commit: "base-sha",
+            dependencies: dependencies,
+            files: files,
+            message: message,
+            commit_message_options: {}
+          )
+        end
+
+        if attempt.zero?
+          expect(invocation.call).to eq(pull_request)
+        else
+          expect(&invocation).to raise_error(ArgumentError, /creates at most one pull request/)
+        end
+      end
+
+      expect(creator).to have_received(:create).once
+    end
+  end
+
+  describe "#validate_dependency_selection!" do
+    it "accepts one parsed dependency" do
+      expect { mode.validate_dependency_selection!([instance_double(Dependabot::Dependency)]) }
+        .not_to raise_error
+    end
+
+    it "rejects no parsed dependency" do
+      expect { mode.validate_dependency_selection!([]) }
+        .to raise_error(ArgumentError, /requires exactly one matching parsed dependency/)
+    end
+
+    it "rejects multiple parsed dependencies" do
+      dependencies = Array.new(2) { instance_double(Dependabot::Dependency) }
+
+      expect { mode.validate_dependency_selection!(dependencies) }
+        .to raise_error(ArgumentError, /requires exactly one matching parsed dependency/)
+    end
   end
 end
