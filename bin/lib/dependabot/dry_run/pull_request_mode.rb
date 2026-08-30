@@ -40,6 +40,9 @@ module Dependabot
 
       sig { void }
       def validate!
+        unless source.provider == "github"
+          raise ArgumentError, "--create-pull-request supports only the github provider"
+        end
         unless dependency_names&.one?
           raise ArgumentError, "--create-pull-request requires exactly one dependency through --dep"
         end

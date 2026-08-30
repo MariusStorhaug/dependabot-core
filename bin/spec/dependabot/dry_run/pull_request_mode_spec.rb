@@ -104,6 +104,21 @@ RSpec.describe Dependabot::DryRun::PullRequestMode do
           .to raise_error(ArgumentError, /requires a git_source credential for github.com/)
       end
     end
+
+    context "with a provider that does not enforce base freshness" do
+      let(:source) do
+        Dependabot::Source.new(
+          provider: "gitlab",
+          repo: "example/repository",
+          directory: "/"
+        )
+      end
+
+      it "raises before repository work starts" do
+        expect { mode.validate! }
+          .to raise_error(ArgumentError, /supports only the github provider/)
+      end
+    end
   end
 
   describe "#create" do

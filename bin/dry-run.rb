@@ -341,7 +341,7 @@ option_parse = OptionParser.new do |opts|
 
   opts.on(
     "--create-pull-request",
-    "Create one pull request for the dependency selected by --dep"
+    "Create one GitHub pull request for the dependency selected by --dep"
   ) do
     $options[:create_pull_request] = true
   end
