@@ -120,6 +120,7 @@ require "dependabot/file_updaters"
 require "dependabot/pull_request_creator"
 require "dependabot/config/file_fetcher"
 require "dependabot/simple_instrumentor"
+require_relative "lib/dependabot/dry_run/pull_request_mode"
 
 require "dependabot/bazel"
 require "dependabot/bun"
@@ -175,6 +176,7 @@ $options = {
   ignore_conditions: [],
   blocked_versions: [],
   pull_request: false,
+  create_pull_request: false,
   hostname: nil,
   cooldown: nil
 }
@@ -335,6 +337,13 @@ option_parse = OptionParser.new do |opts|
     "Output pull request information metadata: title, description"
   ) do
     $options[:pull_request] = true
+  end
+
+  opts.on(
+    "--create-pull-request",
+    "Create one pull request for the dependency selected by --dep"
+  ) do
+    $options[:create_pull_request] = true
   end
 
   opts.on("--enable-beta-ecosystems", "Enable beta ecosystems") do |_value|
@@ -634,6 +643,16 @@ begin
 
   $source = Dependabot::Source.new(**source_options)
 
+  pull_request_mode =
+    if $options[:create_pull_request]
+      Dependabot::DryRun::PullRequestMode.new(
+        source: $source,
+        credentials: $options[:credentials],
+        dependency_names: $options[:dependency_names],
+        cache_steps: $options[:cache_steps]
+      ).tap(&:validate!)
+    end
+
   $repo_contents_path = File.expand_path(File.join("tmp", $repo_name.split("/")))
 
   # Initial fetcher_args for config file fetching (without update_config)
@@ -667,6 +686,8 @@ begin
   fetcher = Dependabot::FileFetchers.for_package_manager($package_manager).new(**fetcher_args)
   $files = fetch_files(fetcher)
   return if $files.empty?
+
+  base_commit = fetcher.commit if pull_request_mode
 
   ecosystem_versions = fetcher.ecosystem_versions
   puts "🎈 Ecosystem Versions log: #{ecosystem_versions}" unless ecosystem_versions.nil?
@@ -950,7 +971,20 @@ begin
       puts "--description--\n#{msg.pr_message}\n--/description--"
       puts "--commit--\n#{msg.commit_message}\n--/commit--"
     end
+
+    if pull_request_mode
+      pull_request_mode.create(
+        base_commit: base_commit,
+        dependencies: updated_deps,
+        files: updated_files,
+        message: msg,
+        commit_message_options: $update_config.commit_message_options.to_h
+      )
+      puts "Pull request created successfully."
+    end
   rescue StandardError => e
+    raise if pull_request_mode
+
     error_details = Dependabot.updater_error_details(e)
     raise unless error_details
 
