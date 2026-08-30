@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "sorbet-runtime"
+require "uri"
 
 require "dependabot/credential"
 require "dependabot/dependency"
@@ -13,6 +14,18 @@ module Dependabot
   module DryRun
     class PullRequestMode
       extend T::Sig
+
+      class Evidence < T::Struct
+        extend T::Sig
+
+        const :number, Integer
+        const :url, String
+
+        sig { returns(String) }
+        def message
+          "Pull request ##{number} created successfully: #{url}"
+        end
+      end
 
       AUTHOR_DETAILS = T.let(
         {
@@ -80,7 +93,7 @@ module Dependabot
           files: T::Array[Dependabot::DependencyFile],
           message: Dependabot::PullRequestCreator::Message,
           commit_message_options: T::Hash[Symbol, T.anything]
-        ).returns(T.anything)
+        ).returns(Evidence)
       end
       def create(base_commit:, dependencies:, files:, message:, commit_message_options:)
         validate!
@@ -88,7 +101,7 @@ module Dependabot
         raise ArgumentError, "--create-pull-request requires a resolved base commit" if base_commit.to_s.empty?
         raise ArgumentError, "--create-pull-request requires updated dependency files" if files.empty?
 
-        pull_request = Dependabot::PullRequestCreator.new(
+        raw_pull_request = Dependabot::PullRequestCreator.new(
           source: source,
           base_commit: T.must(base_commit),
           dependencies: dependencies,
@@ -101,10 +114,10 @@ module Dependabot
           require_up_to_date_base: true
         ).create
 
-        raise "Pull request creation did not return a pull request" unless pull_request
+        evidence = pull_request_evidence(T.cast(raw_pull_request, Object))
 
         @created = true
-        pull_request
+        evidence
       end
 
       private
@@ -128,6 +141,51 @@ module Dependabot
             credential["host"] == source.hostname &&
             !credential["password"].to_s.strip.empty?
         end
+      end
+
+      sig { params(pull_request: Object).returns(Evidence) }
+      def pull_request_evidence(pull_request)
+        raise invalid_pull_request_result unless pull_request.is_a?(Sawyer::Resource)
+
+        url = pull_request_url(pull_request)
+        number = pull_request_number(pull_request)
+        raise invalid_pull_request_result unless valid_pull_request_url?(url, number)
+
+        Evidence.new(number: number, url: url)
+      end
+
+      sig { params(pull_request: Sawyer::Resource).returns(String) }
+      def pull_request_url(pull_request)
+        url = T.cast(pull_request[:html_url], Object)
+        raise invalid_pull_request_result unless url.is_a?(String)
+
+        url
+      end
+
+      sig { params(pull_request: Sawyer::Resource).returns(Integer) }
+      def pull_request_number(pull_request)
+        number = T.cast(pull_request[:number], Object)
+        raise invalid_pull_request_result unless number.is_a?(Integer) && number.positive?
+
+        number
+      end
+
+      sig { params(url: String, number: Integer).returns(T::Boolean) }
+      def valid_pull_request_url?(url, number)
+        uri = URI.parse(url)
+        uri.is_a?(URI::HTTPS) &&
+          uri.host&.casecmp?(source.hostname) == true &&
+          uri.path == "/#{source.repo}/pull/#{number}" &&
+          uri.query.nil? &&
+          uri.fragment.nil? &&
+          uri.userinfo.nil?
+      rescue URI::InvalidURIError
+        false
+      end
+
+      sig { returns(RuntimeError) }
+      def invalid_pull_request_result
+        RuntimeError.new("Pull request creation did not return a usable GitHub pull request URL")
       end
     end
   end

@@ -975,14 +975,14 @@ begin
     end
 
     if pull_request_mode
-      pull_request_mode.create(
+      evidence = pull_request_mode.create(
         base_commit: base_commit,
         dependencies: updated_deps,
         files: updated_files,
         message: msg,
         commit_message_options: $update_config.commit_message_options.to_h
       )
-      puts "Pull request created successfully."
+      puts evidence.message
     end
   rescue StandardError => e
     raise if pull_request_mode

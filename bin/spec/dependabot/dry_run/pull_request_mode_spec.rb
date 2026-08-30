@@ -144,7 +144,17 @@ RSpec.describe Dependabot::DryRun::PullRequestMode do
     let(:dependencies) { [instance_double(Dependabot::Dependency)] }
     let(:files) { [instance_double(Dependabot::DependencyFile)] }
     let(:message) { instance_double(Dependabot::PullRequestCreator::Message) }
-    let(:pull_request) { instance_double(Sawyer::Resource) }
+    let(:pull_request_url) { "https://github.com/example/repository/pull/42" }
+    let(:pull_request_number) { 42 }
+    let(:pull_request) do
+      instance_double(Sawyer::Resource).tap do |resource|
+        allow(resource).to receive(:is_a?) do |klass|
+          [Object, Sawyer::Resource].include?(klass)
+        end
+        allow(resource).to receive(:[]).with(:html_url).and_return(pull_request_url)
+        allow(resource).to receive(:[]).with(:number).and_return(pull_request_number)
+      end
+    end
     let(:creator) { instance_double(Dependabot::PullRequestCreator, create: pull_request) }
 
     it "delegates one ready pull request to the existing creator with safety enabled" do
@@ -172,7 +182,11 @@ RSpec.describe Dependabot::DryRun::PullRequestMode do
         commit_message_options: { prefix: "deps" }
       )
 
-      expect(result).to eq(pull_request)
+      expect(result.url).to eq(pull_request_url)
+      expect(result.number).to eq(pull_request_number)
+      expect(result.message).to eq(
+        "Pull request #42 created successfully: https://github.com/example/repository/pull/42"
+      )
       expect(creator).to have_received(:create).once
     end
 
@@ -219,13 +233,45 @@ RSpec.describe Dependabot::DryRun::PullRequestMode do
         end
 
         if attempt.zero?
-          expect(invocation.call).to eq(pull_request)
+          expect(invocation.call.url).to eq(pull_request_url)
         else
           expect(&invocation).to raise_error(ArgumentError, /creates at most one pull request/)
         end
       end
 
       expect(creator).to have_received(:create).once
+    end
+
+    it "rejects a result without a usable GitHub pull request URL" do
+      allow(Dependabot::PullRequestCreator).to receive(:new).and_return(creator)
+      allow(pull_request).to receive(:[]).with(:html_url).and_return(nil)
+
+      expect do
+        mode.create(
+          base_commit: "base-sha",
+          dependencies: dependencies,
+          files: files,
+          message: message,
+          commit_message_options: {}
+        )
+      end.to raise_error(RuntimeError, /usable GitHub pull request URL/)
+    end
+
+    it "rejects a result URL outside the selected repository" do
+      allow(Dependabot::PullRequestCreator).to receive(:new).and_return(creator)
+      allow(pull_request).to receive(:[]).with(:html_url).and_return(
+        "https://example.invalid/leaked-value"
+      )
+
+      expect do
+        mode.create(
+          base_commit: "base-sha",
+          dependencies: dependencies,
+          files: files,
+          message: message,
+          commit_message_options: {}
+        )
+      end.to raise_error(RuntimeError, /usable GitHub pull request URL/)
     end
   end
 
