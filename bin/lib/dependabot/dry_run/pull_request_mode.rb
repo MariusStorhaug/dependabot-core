@@ -86,6 +86,7 @@ module Dependabot
         validate!
         raise ArgumentError, "--create-pull-request creates at most one pull request" if created?
         raise ArgumentError, "--create-pull-request requires a resolved base commit" if base_commit.to_s.empty?
+        raise ArgumentError, "--create-pull-request requires updated dependency files" if files.empty?
 
         pull_request = Dependabot::PullRequestCreator.new(
           source: source,

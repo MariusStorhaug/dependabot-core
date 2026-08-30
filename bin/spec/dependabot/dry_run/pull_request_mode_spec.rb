@@ -176,6 +176,20 @@ RSpec.describe Dependabot::DryRun::PullRequestMode do
       expect(creator).to have_received(:create).once
     end
 
+    it "rejects empty updated files without invoking the creator" do
+      expect(Dependabot::PullRequestCreator).not_to receive(:new)
+
+      expect do
+        mode.create(
+          base_commit: "base-sha",
+          dependencies: dependencies,
+          files: [],
+          message: message,
+          commit_message_options: {}
+        )
+      end.to raise_error(ArgumentError, /requires updated dependency files/)
+    end
+
     it "rejects a missing base commit without invoking the creator" do
       expect(Dependabot::PullRequestCreator).not_to receive(:new)
 
