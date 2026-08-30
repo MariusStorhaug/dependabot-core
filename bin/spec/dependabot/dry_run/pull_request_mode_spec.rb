@@ -138,13 +138,30 @@ RSpec.describe Dependabot::DryRun::PullRequestMode do
           .to raise_error(ArgumentError, /supports only the github provider/)
       end
     end
+
+    context "with a GitHub Enterprise source" do
+      let(:source) do
+        Dependabot::Source.new(
+          provider: "github",
+          repo: "example/repository",
+          directory: "/",
+          hostname: "github.example.com",
+          api_endpoint: "https://github.example.com/api/v3"
+        )
+      end
+
+      it "raises before repository work starts" do
+        expect { mode.validate! }
+          .to raise_error(ArgumentError, /supports only github.com/)
+      end
+    end
   end
 
   describe "#create" do
     let(:dependencies) { [instance_double(Dependabot::Dependency)] }
     let(:files) { [instance_double(Dependabot::DependencyFile)] }
     let(:message) { instance_double(Dependabot::PullRequestCreator::Message) }
-    let(:pull_request_url) { "https://github.com/example/repository/pull/42" }
+    let(:pull_request_url) { "https://github.com/Example/Repository/pull/42" }
     let(:pull_request_number) { 42 }
     let(:pull_request) do
       instance_double(Sawyer::Resource).tap do |resource|
@@ -185,9 +202,26 @@ RSpec.describe Dependabot::DryRun::PullRequestMode do
       expect(result.url).to eq(pull_request_url)
       expect(result.number).to eq(pull_request_number)
       expect(result.message).to eq(
-        "Pull request #42 created successfully: https://github.com/example/repository/pull/42"
+        "Pull request #42 created successfully: https://github.com/Example/Repository/pull/42"
       )
       expect(creator).to have_received(:create).once
+    end
+
+    it "accepts the explicit default HTTPS port" do
+      allow(Dependabot::PullRequestCreator).to receive(:new).and_return(creator)
+      allow(pull_request).to receive(:[]).with(:html_url).and_return(
+        "https://github.com:443/Example/Repository/pull/42"
+      )
+
+      result = mode.create(
+        base_commit: "base-sha",
+        dependencies: dependencies,
+        files: files,
+        message: message,
+        commit_message_options: {}
+      )
+
+      expect(result.url).to eq("https://github.com:443/Example/Repository/pull/42")
     end
 
     it "rejects empty updated files without invoking the creator" do
@@ -261,6 +295,57 @@ RSpec.describe Dependabot::DryRun::PullRequestMode do
       allow(Dependabot::PullRequestCreator).to receive(:new).and_return(creator)
       allow(pull_request).to receive(:[]).with(:html_url).and_return(
         "https://example.invalid/leaked-value"
+      )
+
+      expect do
+        mode.create(
+          base_commit: "base-sha",
+          dependencies: dependencies,
+          files: files,
+          message: message,
+          commit_message_options: {}
+        )
+      end.to raise_error(RuntimeError, /usable GitHub pull request URL/)
+    end
+
+    it "rejects an alternate HTTPS port" do
+      allow(Dependabot::PullRequestCreator).to receive(:new).and_return(creator)
+      allow(pull_request).to receive(:[]).with(:html_url).and_return(
+        "https://github.com:8443/Example/Repository/pull/42"
+      )
+
+      expect do
+        mode.create(
+          base_commit: "base-sha",
+          dependencies: dependencies,
+          files: files,
+          message: message,
+          commit_message_options: {}
+        )
+      end.to raise_error(RuntimeError, /usable GitHub pull request URL/)
+    end
+
+    it "rejects extra path segments" do
+      allow(Dependabot::PullRequestCreator).to receive(:new).and_return(creator)
+      allow(pull_request).to receive(:[]).with(:html_url).and_return(
+        "https://github.com/Example/Repository/pull/42/"
+      )
+
+      expect do
+        mode.create(
+          base_commit: "base-sha",
+          dependencies: dependencies,
+          files: files,
+          message: message,
+          commit_message_options: {}
+        )
+      end.to raise_error(RuntimeError, /usable GitHub pull request URL/)
+    end
+
+    it "rejects a path number that differs from the response number" do
+      allow(Dependabot::PullRequestCreator).to receive(:new).and_return(creator)
+      allow(pull_request).to receive(:[]).with(:html_url).and_return(
+        "https://github.com/Example/Repository/pull/43"
       )
 
       expect do

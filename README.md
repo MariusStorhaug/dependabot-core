@@ -294,10 +294,10 @@ Here's an example of how to string all these together
 ### Creating a pull request from a dry run
 
 `--create-pull-request` explicitly opts into creating one ready-for-review
-GitHub pull request through Dependabot Core's existing pull request creator. It
-requires exactly one dependency through `--dep`, does not permit `--cache`, and
-fails if the fetched base branch changes before creation. `--pull-request`
-remains a metadata-only output option.
+github.com pull request through Dependabot Core's existing pull request creator.
+GitHub Enterprise is not supported. The option requires exactly one dependency
+through `--dep`, does not permit `--cache`, and fails if the fetched base branch
+changes before creation. `--pull-request` remains a metadata-only output option.
 
 For GitHub, provide a token with `contents: write`, `pull-requests: write`, and
 `issues: write` permissions:

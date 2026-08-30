@@ -34,6 +34,7 @@ module Dependabot
         }.freeze,
         T::Hash[Symbol, String]
       )
+      GITHUB_DOT_COM_API_ENDPOINT = "https://api.github.com/"
 
       sig do
         params(
@@ -55,6 +56,9 @@ module Dependabot
       def validate!
         unless source.provider == "github"
           raise ArgumentError, "--create-pull-request supports only the github provider"
+        end
+        unless source.hostname.casecmp?("github.com") && source.api_endpoint == GITHUB_DOT_COM_API_ENDPOINT
+          raise ArgumentError, "--create-pull-request supports only github.com"
         end
         unless dependency_names&.one?
           raise ArgumentError, "--create-pull-request requires exactly one dependency through --dep"
@@ -174,13 +178,32 @@ module Dependabot
       def valid_pull_request_url?(url, number)
         uri = URI.parse(url)
         uri.is_a?(URI::HTTPS) &&
-          uri.host&.casecmp?(source.hostname) == true &&
-          uri.path == "/#{source.repo}/pull/#{number}" &&
+          valid_github_origin?(uri) &&
+          valid_pull_request_path?(uri.path, number) &&
           uri.query.nil? &&
           uri.fragment.nil? &&
           uri.userinfo.nil?
       rescue URI::InvalidURIError
         false
+      end
+
+      sig { params(uri: URI::HTTPS).returns(T::Boolean) }
+      def valid_github_origin?(uri)
+        uri.host&.casecmp?("github.com") == true && uri.port == 443
+      end
+
+      sig { params(path: String, number: Integer).returns(T::Boolean) }
+      def valid_pull_request_path?(path, number)
+        segments = path.split("/", -1)
+        return false unless segments.length == 5
+
+        source_owner, source_repo = source.repo.split("/", 2)
+
+        segments[0] == "" &&
+          segments[1]&.casecmp?(source_owner) == true &&
+          segments[2]&.casecmp?(source_repo) == true &&
+          segments[3] == "pull" &&
+          segments[4] == number.to_s
       end
 
       sig { returns(RuntimeError) }
