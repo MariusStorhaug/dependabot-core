@@ -3,8 +3,8 @@
 # frozen_string_literal: true
 
 # This script executes a full update run for a given repo (optionally for a
-# specific dependency only), and shows the proposed changes to any dependency
-# files without actually creating a pull request.
+# specific dependency only) and shows the proposed dependency file changes. It
+# creates a pull request only when explicitly requested.
 #
 # It's used regularly by the Dependabot team to manually debug issues, so
 # should always be up-to-date.
