@@ -124,22 +124,8 @@ module Dependabot
       def source_credential?
         credentials.any? do |credential|
           credential["type"] == "git_source" &&
-            credential_matches_source?(credential) &&
-            credential_has_secret?(credential)
-        end
-      end
-
-      sig { params(credential: Dependabot::Credential).returns(T::Boolean) }
-      def credential_matches_source?(credential)
-        return credential["region"] == source.hostname if source.provider == "codecommit"
-
-        credential["host"] == source.hostname
-      end
-
-      sig { params(credential: Dependabot::Credential).returns(T::Boolean) }
-      def credential_has_secret?(credential)
-        [credential["password"], credential["token"]].compact.any? do |secret|
-          !secret.strip.empty?
+            credential["host"] == source.hostname &&
+            !credential["password"].to_s.strip.empty?
         end
       end
     end

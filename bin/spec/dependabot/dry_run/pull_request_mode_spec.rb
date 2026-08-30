@@ -105,6 +105,25 @@ RSpec.describe Dependabot::DryRun::PullRequestMode do
       end
     end
 
+    context "with a token field that the GitHub client does not use" do
+      let(:credentials) do
+        [
+          Dependabot::Credential.new(
+            {
+              "type" => "git_source",
+              "host" => "github.com",
+              "token" => "secret"
+            }
+          )
+        ]
+      end
+
+      it "raises before repository work starts" do
+        expect { mode.validate! }
+          .to raise_error(ArgumentError, /requires a git_source credential for github.com/)
+      end
+    end
+
     context "with a provider that does not enforce base freshness" do
       let(:source) do
         Dependabot::Source.new(
